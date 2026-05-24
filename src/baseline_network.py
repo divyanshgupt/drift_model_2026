@@ -144,7 +144,7 @@ class BaselineNetwork():
         self.vars_ee = np.random.lognormal(mean=self.vars_ee_mean, sigma=0.6, size=self.N)
         self.vars_ie = np.random.lognormal(mean=self.vars_ie_mean, sigma=0.6, size=self.N_inh)
 
-        # feedforward weights
+        #    feedforward weights
         self.w_ef = self.gaussian_weights(self.N, self.N, self.vars_ef) # feedforward weights
         self.w_if = self.gaussian_weights(self.N, self.N_inh, self.vars_if) # feedforward input to inhibition
         if self.inh_type == "co-tuned":
@@ -289,7 +289,7 @@ class BaselineNetwork():
         if self.if_pre_run:
             self.pre_run()
 
-        self.POs = [self.get_preferred_orientations()]
+        self.POs = [self.get_preferred_orientations(inh_mod_scale=1.0)]
 
         for stim_idx in tqdm(range(self.n_stim_total)):
 
@@ -299,10 +299,10 @@ class BaselineNetwork():
 
             #estimate day from stim idx to apply time varying inhibition if applicable
             day = stim_idx // self.n_stim_per_day
-            inh_scale = self.inh_scale_timeline[day]
+            inh_mod_scale = self.inh_scale_timeline[day]
 
             for t in range(self.T_seq):
-                self.step(inh_scale=inh_scale)
+                self.step(inh_scale=inh_mod_scale)
 
             self.evolve_weights()
 
@@ -322,7 +322,7 @@ class BaselineNetwork():
 
             # estimate preferred orientations at end of each day
             if stim_idx % self.n_stim_per_day == 0:
-                PO = self.get_preferred_orientations()
+                PO = self.get_preferred_orientations(inh_mod_scale=inh_mod_scale)
                 self.POs.append(PO)
 
             self.record_weights(stim_idx + 1)
@@ -420,34 +420,23 @@ class BaselineNetwork():
 
     def get_preferred_orientations(self, inh_mod_scale=1.0):
 
-        # placeholder for calculating preferred orientations of neurons based on activity
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-        tuning_curves = np.zeros((self.N, self.n_test_angles))
 
-        # run the simulation for each stimulus
-        for theta_idx, angle in enumerate(theta_list):
-            r_F = circular_gaussian(self.N, angle, amp=0.62, sigma=self.probe_sigma, baseline=0)
-            # run the network to get activity for this stimulus
+        r_F_batch = np.array([
+            circular_gaussian(self.N, a, amp=0.62, sigma=self.probe_sigma, baseline=0)
+            for a in theta_list
+        ])
 
-            u_E = np.zeros(self.N)
-            u_I = np.zeros(self.N_inh)
-            r_E = np.zeros(self.N)
-            r_I = np.zeros(self.N_inh)
-
-            for t in range(self.T_seq):
-                dU_E = (1/self.tau_E) * (-u_E + self.w_ef.T @ r_F + self.w_ee.T @ r_E - inh_mod_scale * self.w_ei.T @ r_I)
-                dU_I = (1/self.tau_I) * (-u_I + self.w_if.T @ r_F + self.w_ie.T @ r_E - inh_mod_scale * self.w_ii.T @ r_I)
-
-                u_E += dU_E * self.dt
-                u_I += dU_I * self.dt
-
-                r_E = self.transfer_E(u_E)
-                r_I = self.transfer_I(u_I)
-
-            tuning_curves[:, theta_idx] = r_E
+        r_E_batch, _ = self._settle_batch(
+            r_F_batch,
+            self.w_ef, self.w_ee, self.w_ei,
+            self.w_if, self.w_ie, self.w_ii,
+            inh_mod_scale
+        )
+        tuning_curves = r_E_batch.T  # (N, n_angles)
 
         peak_activity = np.max(tuning_curves, axis=1)
-        threshold = 0.05 * np.max(peak_activity)  # exclude neurons with flat/near-silent tuning
+        threshold = 0.05 * np.max(peak_activity)
         PO_estimate = np.where(
             peak_activity > threshold,
             theta_list[np.argmax(tuning_curves, axis=1)],
@@ -516,40 +505,84 @@ class BaselineNetwork():
             probe_sigma = self.input_sigma
 
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-        tuning_curves_E = np.zeros((self.N, self.n_test_angles))
 
-        for theta_idx, angle in enumerate(tqdm(theta_list)):
-            r_E, r_I = self.estimate_activity_at_day(angle, day, probe_sigma=probe_sigma)
-            tuning_curves_E[:, theta_idx] = r_E
+        # Build all probe inputs once — (n_angles, N)
+        r_F_batch = np.array([
+            circular_gaussian(self.N, a, amp=0.62, sigma=probe_sigma, baseline=0)
+            for a in theta_list
+        ])
 
+        stim_idx = day * self.n_stim_per_day
+        inh_scale = self.inh_scale_timeline[day]
+
+        # Fetch weight snapshot for this day once (copy → contiguous for fast BLAS)
+        w_ef = self.W_ef[:, :, stim_idx].copy()
+        w_ee = self.W_ee[:, :, stim_idx].copy()
+        w_ei = self.W_ei[:, :, stim_idx].copy()
+        w_if = self.W_if[:, :, stim_idx].copy()
+        w_ie = self.W_ie[:, :, stim_idx].copy()
+        w_ii = self.W_ii[:, :, stim_idx].copy()
+
+        r_E_batch, _ = self._settle_batch(
+            r_F_batch, w_ef, w_ee, w_ei, w_if, w_ie, w_ii, inh_scale
+        )
+        tuning_curves_E = r_E_batch.T  # (N, n_angles)
         tuning_widths = np.zeros(self.N)
+
         for neuron_idx in range(self.N):
             if width_method == 'circular':
-                tuning_widths[neuron_idx] = self.circular_FWHM(theta_list, tuning_curves_E[neuron_idx, :])
+                tuning_widths[neuron_idx] = self.circular_FWHM(
+                    theta_list, tuning_curves_E[neuron_idx, :]
+                )
             elif width_method == 'standard':
-                tuning_widths[neuron_idx] = self.standard_FWHM(theta_list, tuning_curves_E[neuron_idx, :])
-        
+                tuning_widths[neuron_idx] = self.standard_FWHM(
+                    theta_list, tuning_curves_E[neuron_idx, :]
+                )
+
         return tuning_curves_E, tuning_widths
     
     def estimate_tuning_curves_over_days(self, probe_sigma=None, width_method='circular'):
-        
+
         if probe_sigma is None:
             probe_sigma = self.input_sigma
 
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+
+        # Build all probe inputs once — (n_angles, N)
+        r_F_batch = np.array([
+            circular_gaussian(self.N, a, amp=0.62, sigma=probe_sigma, baseline=0)
+            for a in theta_list
+        ])
+
         self.tuning_curves_over_days = np.zeros((self.n_days, self.N, self.n_test_angles))
         self.tuning_widths_over_days = np.zeros((self.n_days, self.N))
 
-        for day in range(self.n_days):
-            for theta_idx, angle in enumerate(tqdm(theta_list)):
-                r_E, r_I = self.estimate_activity_at_day(angle, day, probe_sigma=probe_sigma)
-                self.tuning_curves_over_days[day, :, theta_idx] = r_E
-            
+        for day in tqdm(range(self.n_days), desc="days"):
+            stim_idx = day * self.n_stim_per_day
+            inh_scale = self.inh_scale_timeline[day]
+
+            # Fetch weight snapshot for this day once (copy → contiguous for fast BLAS)
+            w_ef = self.W_ef[:, :, stim_idx].copy()
+            w_ee = self.W_ee[:, :, stim_idx].copy()
+            w_ei = self.W_ei[:, :, stim_idx].copy()
+            w_if = self.W_if[:, :, stim_idx].copy()
+            w_ie = self.W_ie[:, :, stim_idx].copy()
+            w_ii = self.W_ii[:, :, stim_idx].copy()
+
+            r_E_batch, _ = self._settle_batch(
+                r_F_batch, w_ef, w_ee, w_ei, w_if, w_ie, w_ii, inh_scale
+            )
+            self.tuning_curves_over_days[day] = r_E_batch.T  # (N, n_angles)
+
             for neuron_idx in range(self.N):
                 if width_method == 'circular':
-                    self.tuning_widths_over_days[day, neuron_idx] = self.circular_FWHM(theta_list, self.tuning_curves_over_days[day, neuron_idx, :])
+                    self.tuning_widths_over_days[day, neuron_idx] = self.circular_FWHM(
+                        theta_list, self.tuning_curves_over_days[day, neuron_idx, :]
+                    )
                 elif width_method == 'standard':
-                    self.tuning_widths_over_days[day, neuron_idx] = self.standard_FWHM(theta_list, self.tuning_curves_over_days[day, neuron_idx, :])
+                    self.tuning_widths_over_days[day, neuron_idx] = self.standard_FWHM(
+                        theta_list, self.tuning_curves_over_days[day, neuron_idx, :]
+                    )
 
         return self.tuning_curves_over_days, self.tuning_widths_over_days
 
@@ -586,12 +619,12 @@ class BaselineNetwork():
         if probe_sigma is None:
             probe_sigma = self.input_sigma
 
-        tuning_curves = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
+        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         fig, axs = plt.subplots(figsize=(6, 4), dpi=300)
         for neuron_idx in range(0, self.N, 15): # plot every 30th neuron for visibility
-            axs.plot(theta_list, tuning_curves[neuron_idx, :] + offset*neuron_idx, marker='o', ms=2, color='black')
+            axs.plot(theta_list, tuning_curves[neuron_idx, :] + offset*neuron_idx, color='black')
         axs.set_title(f"Population Tuning Curves at Day {day}")
         axs.set_xlabel("Stimulus Angle")
         axs.set_ylabel("Firing Rate")
@@ -605,7 +638,7 @@ class BaselineNetwork():
         if probe_sigma is None:
             probe_sigma = self.input_sigma
         
-        tuning_curves = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
+        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         fig, axs = plt.subplots(figsize=(6, 4))
@@ -752,6 +785,8 @@ class BaselineNetwork():
         ax.set_xlabel("Tuning Width")
         ax.set_ylabel("Drift Magnitude")
         ax.set_title("Drift Magnitude vs Tuning Width")
+        ax.set_xscale('log')
+        ax.set_yscale('log')
         fig.tight_layout()
         if savefig:
             fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
@@ -762,31 +797,35 @@ class BaselineNetwork():
         import matplotlib.animation as animation
 
         fig, ax = plt.subplots(figsize=(6, 4))
-        line, = ax.plot([], [], lw=2)
         ax.set_xlim(0, 180)
         ax.set_ylim(0, 1)
         ax.set_xlabel("Stimulus Angle")
         ax.set_ylabel("Firing Rate")
         fig.suptitle("Tuning Curve Evolution")
 
+        lines = []
+
         def init():
-            tuning_curves = self.estimate_tuning_curves_at_day(0)
+            for l in lines:
+                l.remove()
+            lines.clear()
+            tuning_curves, _ = self.estimate_tuning_curves_at_day(0)
             theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
             for i in range(0, self.N, skip_freq):
-                line, = ax.plot(theta_list, tuning_curves[i, :] + 0.028*i, color='black')
-            return line,
+                l, = ax.plot(theta_list, tuning_curves[i, :] + 0.028*i, color='black')
+                lines.append(l)
+            return lines
 
         def animate(day):
-            tuning_curves = self.estimate_tuning_curves_at_day(day)
+            tuning_curves, _ = self.estimate_tuning_curves_at_day(day)
             theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-
-            for i, line in enumerate(ax.lines):
-                line.set_data(theta_list, tuning_curves[i*skip_freq, :] + 0.028*i)
+            for i, l in enumerate(lines):
+                l.set_data(theta_list, tuning_curves[i*skip_freq, :] + 0.028*i)
             ax.set_title(f"Day {day}")
-            return line,
+            return lines
 
         anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                       frames=self.n_days+1, interval=500, blit=True)
+                                       frames=self.n_days, interval=500, blit=True)
 
         save_path = self.save_location + "tuning_curve_evolution.gif"
         anim.save(save_path, writer='imagemagick')
