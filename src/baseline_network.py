@@ -34,9 +34,11 @@ class BaselineNetwork():
                   plasticity_I_to_E="off", plasticity_I_to_I="off",
                   plasticity_F_to_I="off",
                   inh_time_varying="off", inh_mod_start=7, inh_mod_end=14, inh_mod_scale=0.5,
+                  inh_mod_type="weight_mod", # hyperpolarizing or weight_mod
+                  inh_input_scale = 0,
                   norm=True, set_seed=False, seed=42, inh_scale=1, E_to_I_scale=1,
                   if_pre_run=True, n_pre_run_stimuli=300,
-                  train_sigma=60, probe_sigma=5,
+                  train_sigma=25, probe_sigma=5,
                   save_location="../results/recurrent_complete/feedforward_subset/"):
 
         self.inh_type = inh_type
@@ -51,6 +53,10 @@ class BaselineNetwork():
         self.plasticity_I_to_E = plasticity_I_to_E
         self.plasticity_I_to_I = plasticity_I_to_I
         self.plasticity_F_to_I = plasticity_F_to_I
+
+    
+        self.inh_mod_type = inh_mod_type
+        self.inh_input_scale = inh_input_scale # for input based inhibition manipulation
 
         self.inh_time_varying = inh_time_varying
         self.inh_mod_start = inh_mod_start
@@ -74,7 +80,8 @@ class BaselineNetwork():
 
         self.setup_params()
         self.setup_weights()
-        self.plot_initial_weights()
+        self.setup_inh_input()
+        # self.plot_initial_weights()
 
         self.setup_inh_timeline()
     
@@ -95,7 +102,7 @@ class BaselineNetwork():
         self.hebb_scaling = 0.3
         self.rand_scaling = 1.0
 
-        self.input_sigma = 20
+        self.input_sigma = self.train_sigma
         
         self.vars_ef_mean = 2 # mean of lognormal distribution of widths of F to E weights
         self.vars_if_mean = 3 # mean of lognormal distribution of widths of F to I weights
@@ -133,6 +140,17 @@ class BaselineNetwork():
 
         return None
     
+    def setup_inh_input(self):
+
+        if self.inh_mod_type == "hyperpolarizing":
+            self.inh_input = -0.5 * self.inh_input_scale * np.ones(self.N_inh)
+
+        elif self.inh_mod_type == "weight_mod":
+            self.inh_input = np.zeros(self.N_inh)
+            if self.inh_time_varying == "off":
+                self.w_ei *= self.inh_scale
+
+    
     def setup_weights(self):
 
         # feedforward connection widths
@@ -151,7 +169,7 @@ class BaselineNetwork():
             self.w_ei = self.gaussian_weights(self.N_inh, self.N, self.vars_ei) # I to E weights
         elif self.inh_type == "random":
             self.w_ei = self.random_weights(self.N_inh, self.N)
-        self.w_ei *= self.inh_scale
+        # self.w_ei *= self.inh_scale
 
         # recurrent weights (if present)
         if self.E_to_E == "on":
@@ -332,7 +350,7 @@ class BaselineNetwork():
     def step(self, inh_scale=1.0):
 
         dU_E = (1/self.tau_E) * (-self.u_E + self.w_ef.T @ self.r_F + self.w_ee.T @ self.r_E - inh_scale * self.w_ei.T @ self.r_I)
-        dU_I = (1/self.tau_I) * (-self.u_I + self.w_if.T @ self.r_F + self.w_ie.T @ self.r_E - inh_scale * self.w_ii.T @ self.r_I)
+        dU_I = (1/self.tau_I) * (-self.u_I + self.w_if.T @ self.r_F + self.w_ie.T @ self.r_E - inh_scale * self.w_ii.T @ self.r_I + self.inh_input)
 
         self.u_E += dU_E * self.dt
         self.u_I += dU_I * self.dt
@@ -367,7 +385,7 @@ class BaselineNetwork():
 
         return H 
 
-    def hebbian_plasticity_rule(self, w_old, r_pre, r_post, if_recurrent=False):
+    def hebbian_plasticity_rule(self, w_old, r_pre, r_post, if_recurrent=False, intrinsic=True):
         """
         dW = learning_rate * (kH + eta) * propensity
         """
@@ -375,7 +393,10 @@ class BaselineNetwork():
         eta = np.random.randn(*w_old.shape)
         prop_function = self.propensity(w_old, self.prop_a)
         hebb = self.hebb_scaling * H * prop_function
-        rand = self.rand_scaling * eta*prop_function
+        if intrinsic:
+            rand = self.rand_scaling * eta*prop_function
+        else:
+            rand = 0
         w_new = w_old + (hebb + rand) * self.learning_rate
 
         # set diagonal to 0 for recurrent weights
@@ -388,23 +409,28 @@ class BaselineNetwork():
 
         # Plasticity of feedforward weights
         self.w_ef = self.hebbian_plasticity_rule(self.w_ef, self.r_F, self.r_E)
-
-        # Plasticity of recurrent E->E weights
-        if self.plasticity_E_to_E == "on":
-            self.w_ee = self.hebbian_plasticity_rule(self.w_ee, self.r_E, self.r_E, if_recurrent=True)
-            self.w_ee = self.normalisation(self.w_ee, if_recurrent=True)
-        # Plasticity of E->I weights
-        if self.plasticity_E_to_I == "on":
-            self.w_ie = self.hebbian_plasticity_rule(self.w_ie, self.r_E, self.r_I)
-        # Plasticity of I->E weights
-        if self.plasticity_I_to_E == "on":
-            self.w_ei = self.hebbian_plasticity_rule(self.w_ei, self.r_I, self.r_E)
-        # Plasticity of I->I weights
-        if self.plasticity_I_to_I == "on":
-            self.w_ii = self.hebbian_plasticity_rule(self.w_ii, self.r_I, self.r_I, if_recurrent=True)
         # Plasticity of F->I weights
         if self.plasticity_F_to_I == "on":
             self.w_if = self.hebbian_plasticity_rule(self.w_if, self.r_F, self.r_I)
+
+        # Plasticity of recurrent E->E weights
+        if self.plasticity_E_to_E == "on":
+            self.w_ee = self.hebbian_plasticity_rule(self.w_ee, self.r_E, self.r_E, 
+                                                     if_recurrent=True, intrinsic=False)
+            self.w_ee = self.normalisation(self.w_ee, if_recurrent=True)
+        # Plasticity of E->I weights
+        if self.plasticity_E_to_I == "on":
+            self.w_ie = self.hebbian_plasticity_rule(self.w_ie, self.r_E, self.r_I,
+                                                     intrinsic=False)
+        # Plasticity of I->E weights
+        if self.plasticity_I_to_E == "on":
+            self.w_ei = self.hebbian_plasticity_rule(self.w_ei, self.r_I, self.r_E,
+                                                     intrinsic=False)
+        # Plasticity of I->I weights
+        if self.plasticity_I_to_I == "on":
+            self.w_ii = self.hebbian_plasticity_rule(self.w_ii, self.r_I, self.r_I, 
+                                                     if_recurrent=True, intrinsic=False)
+
 
     def record_weights(self, stim_idx):
 
@@ -463,24 +489,24 @@ class BaselineNetwork():
     
         return drift_mag, drift_rate, convergence
 
-    def estimate_activity_at_day(self, theta, day, probe_sigma=None):
+    def estimate_activity_at_day(self, theta, day, sigma=None):
         """
         
         """
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+        if sigma is None:
+            sigma = self.input_sigma
 
-        r_F = circular_gaussian(self.N, theta, amp=0.62, sigma=probe_sigma, baseline=0)
+        r_F = circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
 
         stim_idx = day * self.n_stim_per_day
         inh_mod_scale = self.inh_scale_timeline[day]
 
-        w_ef = self.W_ef[:, :, stim_idx]
-        w_ee = self.W_ee[:, :, stim_idx]
-        w_ei = self.W_ei[:, :, stim_idx]
-        w_if = self.W_if[:, :, stim_idx]
-        w_ie = self.W_ie[:, :, stim_idx]
-        w_ii = self.W_ii[:, :, stim_idx]
+        w_ef = self.W_ef[:, :, stim_idx].copy()
+        w_ee = self.W_ee[:, :, stim_idx].copy()
+        w_ei = self.W_ei[:, :, stim_idx].copy()
+        w_if = self.W_if[:, :, stim_idx].copy()
+        w_ie = self.W_ie[:, :, stim_idx].copy()
+        w_ii = self.W_ii[:, :, stim_idx].copy()
 
         u_E = np.zeros(self.N)
         u_I = np.zeros(self.N_inh)
@@ -499,16 +525,16 @@ class BaselineNetwork():
 
         return r_E, r_I
     
-    def estimate_tuning_curves_at_day(self, day, probe_sigma=None, width_method='circular'):
+    def estimate_tuning_curves_at_day(self, day, sigma=None, width_method='circular'):
         
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+        if sigma is None:
+            sigma = self.input_sigma
 
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         # Build all probe inputs once — (n_angles, N)
         r_F_batch = np.array([
-            circular_gaussian(self.N, a, amp=0.62, sigma=probe_sigma, baseline=0)
+            circular_gaussian(self.N, a, amp=0.62, sigma=sigma, baseline=0)
             for a in theta_list
         ])
 
@@ -541,16 +567,16 @@ class BaselineNetwork():
 
         return tuning_curves_E, tuning_widths
     
-    def estimate_tuning_curves_over_days(self, probe_sigma=None, width_method='circular'):
+    def estimate_tuning_curves_over_days(self, sigma=None, width_method='circular'):
 
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+        if sigma is None:
+            sigma = self.input_sigma
 
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         # Build all probe inputs once — (n_angles, N)
         r_F_batch = np.array([
-            circular_gaussian(self.N, a, amp=0.62, sigma=probe_sigma, baseline=0)
+            circular_gaussian(self.N, a, amp=0.62, sigma=sigma, baseline=0)
             for a in theta_list
         ])
 
@@ -615,11 +641,11 @@ class BaselineNetwork():
         return (indices[-1] - indices[0]) * dx
 
 
-    def plot_population_tuning_curves(self, day, offset=0.028, probe_sigma=None, savefig=False):
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+    def plot_population_tuning_curves(self, day, offset=0.028, sigma=None, savefig=False):
+        if sigma is None:
+            sigma = self.input_sigma
 
-        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
+        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, sigma=sigma)
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         fig, axs = plt.subplots(figsize=(6, 4), dpi=300)
@@ -634,11 +660,11 @@ class BaselineNetwork():
         fig.show()
     
 
-    def plot_cell_tuning_curve(self, cell_idx, day, probe_sigma=None, savefig=False):
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+    def plot_cell_tuning_curve(self, cell_idx, day, sigma=None, savefig=False):
+        if sigma is None:
+            sigma = self.input_sigma
         
-        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, probe_sigma=probe_sigma)
+        tuning_curves, _ = self.estimate_tuning_curves_at_day(day, sigma=sigma)
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         fig, axs = plt.subplots(figsize=(6, 4))
@@ -653,25 +679,20 @@ class BaselineNetwork():
 
     def plot_initial_weights(self, savefig=False):
 
-        fig, axs = plt.subplots(2, 3, figsize=(10, 5))
+        fig, axs = plt.subplots(2, 3, figsize=(12, 6))
 
-        axs[0, 0].imshow(self.w_ef.T, aspect='auto')
-        axs[0, 0].set_title("F to E weights")
-
-        axs[0, 1].imshow(self.w_ee.T, aspect='auto')
-        axs[0, 1].set_title("E to E weights")
-
-        axs[0, 2].imshow(self.w_ei.T, aspect='auto')
-        axs[0, 2].set_title("I to E weights")
-
-        axs[1, 0].imshow(self.w_if.T, aspect='auto')
-        axs[1, 0].set_title("F to I weights")
-
-        axs[1, 1].imshow(self.w_ie.T, aspect='auto')
-        axs[1, 1].set_title("E to I weights")
-
-        axs[1, 2].imshow(self.w_ii.T, aspect='auto')
-        axs[1, 2].set_title("I to I weights")
+        panels = [
+            (axs[0, 0], self.w_ef.T, "F to E weights"),
+            (axs[0, 1], self.w_ee.T, "E to E weights"),
+            (axs[0, 2], self.w_ei.T, "I to E weights"),
+            (axs[1, 0], self.w_if.T, "F to I weights"),
+            (axs[1, 1], self.w_ie.T, "E to I weights"),
+            (axs[1, 2], self.w_ii.T, "I to I weights"),
+        ]
+        for ax, data, title in panels:
+            im = ax.imshow(data, aspect='auto')
+            ax.set_title(title)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
         fig.tight_layout()
         if savefig:
@@ -679,29 +700,21 @@ class BaselineNetwork():
         fig.show()   
 
     def plot_weights(self, savefig=False):
-        
-        fig, axs = plt.subplots(2, 3, figsize=(10, 5))
 
-        # add colorbars
+        fig, axs = plt.subplots(2, 3, figsize=(12, 6))
 
-        axs[0, 0].imshow(self.w_ef.T, aspect='auto')
-        axs[0, 0].set_title("F to E weights")
-
-
-        axs[0, 1].imshow(self.w_ee.T, aspect='auto')
-        axs[0, 1].set_title("E to E weights")
-
-        axs[0, 2].imshow(self.w_ei.T, aspect='auto')
-        axs[0, 2].set_title("I to E weights")
-
-        axs[1, 0].imshow(self.w_if.T, aspect='auto')
-        axs[1, 0].set_title("F to I weights")
-
-        axs[1, 1].imshow(self.w_ie.T, aspect='auto')
-        axs[1, 1].set_title("E to I weights")
-
-        axs[1, 2].imshow(self.w_ii.T, aspect='auto')
-        axs[1, 2].set_title("I to I weights")
+        panels = [
+            (axs[0, 0], self.w_ef.T, "F to E weights"),
+            (axs[0, 1], self.w_ee.T, "E to E weights"),
+            (axs[0, 2], self.w_ei.T, "I to E weights"),
+            (axs[1, 0], self.w_if.T, "F to I weights"),
+            (axs[1, 1], self.w_ie.T, "E to I weights"),
+            (axs[1, 2], self.w_ii.T, "I to I weights"),
+        ]
+        for ax, data, title in panels:
+            im = ax.imshow(data, aspect='auto')
+            ax.set_title(title)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
         fig.tight_layout()
         if savefig:
@@ -746,13 +759,37 @@ class BaselineNetwork():
             fig.savefig(self.save_location+"drift_metrics.png", dpi=300)
         fig.show()
 
-    def plot_activity_at_day(self, day, theta, probe_sigma=None, savefig=False):
+    def plot_drift_metric_distributions(self, drift_mag, drift_rate, convergence, savefig=False, figsize=(10, 3)):
 
-        if probe_sigma is None:
-            probe_sigma = self.input_sigma
+        fig, axs = plt.subplots(1, 3, figsize=figsize)
 
-        r_F = circular_gaussian(self.N, theta, amp=0.62, sigma=probe_sigma, baseline=0)
-        r_E, r_I = self.estimate_activity_at_day(theta, day, probe_sigma=probe_sigma)
+        axs[0].hist(drift_mag[-1, :], bins='fd', alpha=0.7)
+        axs[0].set_title("Drift Magnitude Distribution")
+        axs[0].set_xlabel("Degrees")
+        axs[0].set_ylabel("Frequency")
+
+        axs[1].hist(drift_rate[-1, :], bins='fd', alpha=0.7)
+        axs[1].set_title("Drift Rate Distribution")
+        axs[1].set_xlabel("Degrees/day")
+        axs[1].set_ylabel("Frequency")
+
+        axs[2].hist(convergence[-1, :], bins='fd', alpha=0.7)
+        axs[2].set_title("Convergence Distribution")
+        axs[2].set_xlabel("Degrees")
+        axs[2].set_ylabel("Frequency")
+
+        fig.tight_layout()
+        if savefig:
+            fig.savefig(self.save_location+"drift_metric_distributions.png", dpi=300)
+        fig.show()
+
+    def plot_activity_at_day(self, day, theta, sigma=None, savefig=False):
+
+        if sigma is None:
+            sigma = self.input_sigma
+
+        r_F = circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
+        r_E, r_I = self.estimate_activity_at_day(theta, day, sigma=sigma)
 
         fig, axs = plt.subplots(1, 3, figsize=(11, 4))
 
@@ -792,13 +829,41 @@ class BaselineNetwork():
             fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
         fig.show()
 
-    def create_tuning_curve_animation(self, skip_freq=10):
+    def plot_initial_vs_final_tuning_curves(self, sigma=None):
+
+        if sigma is None:
+            sigma = self.input_sigma
+
+        initial_tuning_curves, _ = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+        final_tuning_curves, _ = self.estimate_tuning_curves_at_day(self.n_days-1, sigma=sigma)
+
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
+        for neuron_idx in range(0, self.N, 15): # plot every 30th neuron for visibility
+            axs[0].plot(theta_list, initial_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
+            axs[1].plot(theta_list, final_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
+        axs[0].set_title(f"Initial Tuning Curves")
+        axs[1].set_title(f"Final Tuning Curves")
+        for ax in axs:
+            ax.set_xlabel("Stimulus Angle")
+            ax.set_ylabel("Firing Rate")
+        fig.tight_layout()
+        fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
+        fig.show()
+
+    def create_tuning_curve_animation(self, skip_freq=15, sigma=None):
 
         import matplotlib.animation as animation
 
-        fig, ax = plt.subplots(figsize=(6, 4))
+        offset = 0.028
+        neuron_indices = list(range(0, self.N, skip_freq))
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+        max_ylim = offset * neuron_indices[-1] + 2
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
         ax.set_xlim(0, 180)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(0, max_ylim)
         ax.set_xlabel("Stimulus Angle")
         ax.set_ylabel("Firing Rate")
         fig.suptitle("Tuning Curve Evolution")
@@ -809,18 +874,16 @@ class BaselineNetwork():
             for l in lines:
                 l.remove()
             lines.clear()
-            tuning_curves, _ = self.estimate_tuning_curves_at_day(0)
-            theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-            for i in range(0, self.N, skip_freq):
-                l, = ax.plot(theta_list, tuning_curves[i, :] + 0.028*i, color='black')
+            tuning_curves, _ = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+            for nrn_idx in neuron_indices:
+                l, = ax.plot(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx, color='black')
                 lines.append(l)
             return lines
 
         def animate(day):
-            tuning_curves, _ = self.estimate_tuning_curves_at_day(day)
-            theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-            for i, l in enumerate(lines):
-                l.set_data(theta_list, tuning_curves[i*skip_freq, :] + 0.028*i)
+            tuning_curves, _ = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            for l, nrn_idx in zip(lines, neuron_indices):
+                l.set_data(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx)
             ax.set_title(f"Day {day}")
             return lines
 
@@ -828,6 +891,80 @@ class BaselineNetwork():
                                        frames=self.n_days, interval=500, blit=True)
 
         save_path = self.save_location + "tuning_curve_evolution.gif"
+        anim.save(save_path, writer='imagemagick')
+
+    def create_single_cell_tuning_curve_animation(self, tuning_curve_over_days, cell_idx):
+        """
+        tuning_curve_over_days: (n_days, n_angles)
+        """
+        import matplotlib.animation as animation
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
+        ax.set_xlim(0, 180)
+        ax.set_ylim(0, 4)
+        ax.set_xlabel("Stimulus Angle")
+        ax.set_ylabel("Firing Rate")
+        fig.suptitle(f"Tuning Curve Evolution of Cell {cell_idx}")
+
+        line, = ax.plot([], [], color='blue')
+
+        def init():
+            line.set_data([], [])
+            return line,
+
+        def animate(day):
+            theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+            line.set_data(theta_list, tuning_curve_over_days[day, :])
+            ax.set_title(f"Day {day}")
+            return line,
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=self.n_days, interval=500, blit=True)
+
+        save_path = self.save_location + f"tuning_curve_evolution_cell_{cell_idx}.gif"
+        anim.save(save_path, writer='imagemagick')
+
+    def create_pop_activity_animation(self, theta, sigma=None):
+        """
+        Animate population activity over days for a given stimulus.
+        """
+        if sigma is None:
+            sigma = self.input_sigma
+
+        import matplotlib.animation as animation
+
+        fig, ax = plt.subplots(2, 1, figsize=(6, 4), dpi=200)
+
+        ax[0].set_xlim(0, self.N)
+        ax[0].set_ylim(0, 4)
+        ax[0].set_xlabel("Neuron Index")
+        ax[0].set_ylabel("Firing Rate")
+        ax[1].set_xlim(0, self.N_inh)
+        ax[1].set_ylim(0, 4)
+        ax[1].set_xlabel("Neuron Index")
+        ax[1].set_ylabel("Firing Rate")
+
+        fig.suptitle(f"Population Activity Evolution for Stimulus {theta:.1f}")
+
+        line_E, = ax[0].plot([], [], marker='.', ms=4, color='blue')
+        line_I, = ax[1].plot([], [], marker='.', ms=4, color='red')
+
+        def init():
+            line_E.set_data([], [])
+            line_I.set_data([], [])
+            return line_E, line_I,
+
+        def animate(day):
+            r_E, r_I = self.estimate_activity_at_day(theta, day, sigma=sigma)
+            line_E.set_data(range(self.N), r_E)
+            line_I.set_data(range(self.N_inh), r_I)
+            ax[0].set_title(f"Day {day}")
+            return line_E, line_I,
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=self.n_days, interval=500, blit=True)
+
+        save_path = self.save_location + f"population_activity_evolution_theta_{theta:.1f}.gif"
         anim.save(save_path, writer='imagemagick')
 
     def save_results(self, drift_mag, drift_rate, convergence):
@@ -861,15 +998,18 @@ class BaselineNetwork():
             "plasticity_E_to_I": self.plasticity_E_to_I,
             "plasticity_I_to_E": self.plasticity_I_to_E,
             "plasticity_I_to_I": self.plasticity_I_to_I,
+            "plasticity_F_to_I": self.plasticity_F_to_I,
             "inh_time_varying": self.inh_time_varying,
             "inh_mod_start": self.inh_mod_start,
             "inh_mod_end": self.inh_mod_end,
             "inh_mod_scale": self.inh_mod_scale,
+            "inh_mod_type": self.inh_mod_type,
             "tau_E": self.tau_E,
             "tau_I": self.tau_I,
             "dt": self.dt,
             "hebb_scaling": self.hebb_scaling,
             "rand_scaling": self.rand_scaling,
+            "learning_rate": self.learning_rate,
             "prop_a": self.prop_a,
             "prop_shift": self.prop_shift,
             "vars_ef_mean": self.vars_ef_mean,
@@ -901,18 +1041,66 @@ class BaselineNetwork():
 
         self.plot_initial_weights(savefig=True)
         self.run()
+        self.plot_weights(savefig=True)
         drift_mag, drift_rate, convergence = self.get_drift_metrics()
         self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
-        
+        self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
         # estimate tuning widths at initial day
         # tuning_curves_initial = self.estimate_tuning_curves_at_day(0)
         tuning_widths_assigned = self.vars_ef.copy() # assigned tuning widths based on feedforward weights
 
-        self.tuning_curves_over_days, self.tuning_widths_over_days = self.estimate_tuning_curves_over_days()
+        self.tuning_curves_over_days, self.tuning_widths_over_days = self.estimate_tuning_curves_over_days(sigma=self.train_sigma)
 
         self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
-        self.create_tuning_curve_animation()
+
+        self.plot_initial_vs_final_tuning_curves(sigma=self.train_sigma)
+
+        self.create_tuning_curve_animation(sigma=self.train_sigma)
+
+        self.create_single_cell_tuning_curve_animation(self.tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
+        self.create_pop_activity_animation(theta=90)
         if save_results:
             self.save_results(drift_mag, drift_rate, convergence)
 
         return None
+    
+def load_data(save_location):
+
+    with h5.File(save_location + "results.h5", "r") as f:
+        W_ef = f["W_ef"][:]
+        W_ee = f["W_ee"][:]
+        W_ei = f["W_ei"][:]
+        W_if = f["W_if"][:]
+        W_ie = f["W_ie"][:]
+        W_ii = f["W_ii"][:]
+
+        POs = f["POs"][:]
+        tuning_widths_over_days = f["tuning_widths_over_days"][:]
+        tuning_curves_over_days = f["tuning_curves_over_days"][:]
+
+        drift_mag = f["drift_mag"][:]
+        drift_rate = f["drift_rate"][:]
+        convergence = f["convergence"][:]
+
+    with open(save_location + "hyperparameters.json", "r") as f:
+        params = json.load(f)
+
+    return {
+        "weights": {
+            "W_ef": W_ef,
+            "W_ee": W_ee,
+            "W_ei": W_ei,
+            "W_if": W_if,
+            "W_ie": W_ie,
+            "W_ii": W_ii
+        },
+        "metrics": {
+            "POs": POs,
+            "tuning_widths_over_days": tuning_widths_over_days,
+            "tuning_curves_over_days": tuning_curves_over_days,
+            "drift_mag": drift_mag,
+            "drift_rate": drift_rate,
+            "convergence": convergence
+        },
+        "hyperparameters": params
+    }
