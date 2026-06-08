@@ -35,10 +35,10 @@ class BaselineNetwork():
                   plasticity_F_to_I="off",
                   inh_time_varying="off", inh_mod_start=7, inh_mod_end=14, inh_mod_scale=0.5,
                   inh_mod_type="weight_mod", # hyperpolarizing or weight_mod
-                  inh_input_scale = 0,
+                  inh_input_scale = 1,
                   norm=True, set_seed=False, seed=42, inh_scale=1, E_to_I_scale=1,
                   if_pre_run=True, n_pre_run_stimuli=300,
-                  train_sigma=25, probe_sigma=5,
+                  train_sigma=20, probe_sigma=5,
                   save_location="../results/recurrent_complete/feedforward_subset/"):
 
         self.inh_type = inh_type
@@ -143,7 +143,7 @@ class BaselineNetwork():
     def setup_inh_input(self):
 
         if self.inh_mod_type == "hyperpolarizing":
-            self.inh_input = -0.5 * self.inh_input_scale * np.ones(self.N_inh)
+            self.inh_input = - 0.75 * self.inh_input_scale * np.ones(self.N_inh)
 
         elif self.inh_mod_type == "weight_mod":
             self.inh_input = np.zeros(self.N_inh)
@@ -373,7 +373,7 @@ class BaselineNetwork():
             r_E = np.maximum(0, u_E)
             r_I = np.maximum(0, u_I)
             dU_E = (1/self.tau_E) * (-u_E + r_F_batch @ w_ef + r_E @ w_ee - inh_scale * r_I @ w_ei)
-            dU_I = (1/self.tau_I) * (-u_I + r_F_batch @ w_if + r_E @ w_ie - inh_scale * r_I @ w_ii)
+            dU_I = (1/self.tau_I) * (-u_I + r_F_batch @ w_if + r_E @ w_ie - inh_scale * r_I @ w_ii + self.inh_input)
             u_E += dU_E * self.dt
             u_I += dU_I * self.dt
         return np.maximum(0, u_E), np.maximum(0, u_I)
@@ -444,8 +444,12 @@ class BaselineNetwork():
         return None
 
 
-    def get_preferred_orientations(self, inh_mod_scale=1.0):
-
+    def get_preferred_orientations(self, inh_mod_scale=1.0, method='argmax', min_R=0.1):
+        """
+        method: 'argmax' (default) or 'circular_mean' (pycircstat weighted circular mean).
+        min_R: for 'circular_mean', minimum resultant vector length to accept a PO estimate.
+               R=0 means no tuning, R=1 means perfectly tuned. Cells below min_R get NaN.
+        """
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         r_F_batch = np.array([
@@ -461,13 +465,35 @@ class BaselineNetwork():
         )
         tuning_curves = r_E_batch.T  # (N, n_angles)
 
-        peak_activity = np.max(tuning_curves, axis=1)
-        threshold = 0.05 * np.max(peak_activity)
-        PO_estimate = np.where(
-            peak_activity > threshold,
-            theta_list[np.argmax(tuning_curves, axis=1)],
-            np.nan
-        )
+        if method == 'argmax':
+            peak_activity = np.max(tuning_curves, axis=1)
+            threshold = 0.05 * np.max(peak_activity)
+            PO_estimate = np.where(
+                peak_activity > threshold,
+                theta_list[np.argmax(tuning_curves, axis=1)],
+                np.nan
+            )
+
+        elif method == 'circular_mean':
+            import pycircstat
+            # Orientation is axial ([0, 180°) with 0≡180): double angles to map onto
+            # the full circle, compute weighted circular mean, then halve back.
+            alpha_doubled = np.deg2rad(theta_list) * 2  # (n_angles,)
+            PO_estimate = np.full(self.N, np.nan)
+            for i in range(self.N):
+                w = tuning_curves[i]
+                total = np.sum(w)
+                if total < 1e-10:
+                    continue
+                w_norm = w / total
+                R = pycircstat.resultant_vector_length(alpha_doubled, w=w_norm)
+                if R < min_R:
+                    continue
+                mu = pycircstat.mean(alpha_doubled, w=w_norm)
+                po = np.rad2deg(mu) / 2   # halve back to [−90°, 90°]
+                if po < 0:
+                    po += 180             # fold to [0°, 180°)
+                PO_estimate[i] = po
 
         return PO_estimate
 
@@ -515,7 +541,7 @@ class BaselineNetwork():
 
         for t in range(self.T_seq):
             dU_E = (1/self.tau_E) * (-u_E + w_ef.T @ r_F + w_ee.T @ r_E - inh_mod_scale * w_ei.T @ r_I)
-            dU_I = (1/self.tau_I) * (-u_I + w_if.T @ r_F + w_ie.T @ r_E - inh_mod_scale * w_ii.T @ r_I)
+            dU_I = (1/self.tau_I) * (-u_I + w_if.T @ r_F + w_ie.T @ r_E - inh_mod_scale * w_ii.T @ r_I + self.inh_input)
 
             u_E += dU_E * self.dt
             u_I += dU_I * self.dt
@@ -978,6 +1004,7 @@ class BaselineNetwork():
             f.create_dataset("W_ii", data=self.W_ii)
 
             f.create_dataset("POs", data=self.POs)
+            f.create_dataset("vars_ef", data=self.vars_ef)
             f.create_dataset("tuning_widths_over_days", data=self.tuning_widths_over_days)
             f.create_dataset("tuning_curves_over_days", data=self.tuning_curves_over_days)
 
