@@ -1010,15 +1010,17 @@ class BaselineNetwork():
         save_path = self.save_location + f"population_activity_evolution_theta_{theta:.1f}.gif"
         anim.save(save_path, writer='imagemagick')
 
-    def save_results(self, drift_mag, drift_rate, convergence):
+    def save_results(self, drift_mag, drift_rate, convergence, save_weights=False):
 
         with h5.File(self.save_location + "results.h5", "w") as f:
-            f.create_dataset("W_ef", data=self.W_ef)
-            f.create_dataset("W_ee", data=self.W_ee)
-            f.create_dataset("W_ei", data=self.W_ei)
-            f.create_dataset("W_if", data=self.W_if)
-            f.create_dataset("W_ie", data=self.W_ie)
-            f.create_dataset("W_ii", data=self.W_ii)
+
+            if save_weights:
+                f.create_dataset("W_ef", data=self.W_ef)
+                f.create_dataset("W_ee", data=self.W_ee)
+                f.create_dataset("W_ei", data=self.W_ei)
+                f.create_dataset("W_if", data=self.W_if)
+                f.create_dataset("W_ie", data=self.W_ie)
+                f.create_dataset("W_ii", data=self.W_ii)
 
             f.create_dataset("POs", data=self.POs)
             f.create_dataset("vars_ef", data=self.vars_ef)
