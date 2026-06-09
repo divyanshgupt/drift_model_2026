@@ -36,9 +36,9 @@ class BaselineNetwork():
                   inh_time_varying="off", inh_mod_start=7, inh_mod_end=14, inh_mod_scale=0.5,
                   inh_mod_type="weight_mod", # hyperpolarizing or weight_mod
                   inh_input_scale = 1,
-                  norm=True, set_seed=False, seed=42, inh_scale=1, E_to_I_scale=1,
+                  norm=True, set_seed=True, seed=42, inh_scale=1, E_to_I_scale=1,
                   if_pre_run=True, n_pre_run_stimuli=300,
-                  train_sigma=20, probe_sigma=5,
+                  train_sigma=25, probe_sigma=25,
                   save_location="../results/recurrent_complete/feedforward_subset/"):
 
         self.inh_type = inh_type
@@ -878,6 +878,23 @@ class BaselineNetwork():
         fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
         fig.show()
 
+    def plot_initial_vs_final_tuning_width_distributions(self, sigma=None):
+
+        initial_tuning_widths = self.tuning_widths_over_days[0]
+        final_tuning_widths = self.tuning_widths_over_days[-1]
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
+        axs[0].hist(initial_tuning_widths, bins='fd', alpha=0.7)
+        axs[0].set_title("Initial Tuning Width Distribution")
+        axs[0].set_xlabel("Degrees")
+        axs[0].set_ylabel("Frequency")
+        axs[1].hist(final_tuning_widths, bins='fd', alpha=0.7)
+        axs[1].set_title("Final Tuning Width Distribution")
+        axs[1].set_xlabel("Degrees")
+        axs[1].set_ylabel("Frequency")
+        fig.tight_layout()
+        fig.savefig(self.save_location+"initial_vs_final_tuning_width_distributions.png", dpi=300)
+        fig.show()
+
     def create_tuning_curve_animation(self, skip_freq=15, sigma=None):
 
         import matplotlib.animation as animation
@@ -1081,7 +1098,7 @@ class BaselineNetwork():
         self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
 
         self.plot_initial_vs_final_tuning_curves(sigma=self.train_sigma)
-
+        self.plot_initial_vs_final_tuning_width_distributions(sigma=self.train_sigma)
         self.create_tuning_curve_animation(sigma=self.train_sigma)
 
         self.create_single_cell_tuning_curve_animation(self.tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
