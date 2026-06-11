@@ -39,6 +39,7 @@ class BaselineNetwork():
                   norm=True, set_seed=True, seed=42, inh_scale=1, E_to_I_scale=1,
                   if_pre_run=True, n_pre_run_stimuli=300,
                   train_sigma=25, probe_sigma=25,
+                  activity_dependent_noise=False,
                   save_location="../results/recurrent_complete/feedforward_subset/"):
 
         self.inh_type = inh_type
@@ -54,7 +55,7 @@ class BaselineNetwork():
         self.plasticity_I_to_I = plasticity_I_to_I
         self.plasticity_F_to_I = plasticity_F_to_I
 
-    
+        self.activity_dependent_noise = activity_dependent_noise
         self.inh_mod_type = inh_mod_type
         self.inh_input_scale = inh_input_scale # for input based inhibition manipulation
 
@@ -391,10 +392,16 @@ class BaselineNetwork():
         """
         H = self.hebbian_component(r_pre, r_post)
         eta = np.random.randn(*w_old.shape)
+        
+        if self.activity_dependent_noise:
+            eta_activity = eta * r_post[:, np.newaxis] # check this
+        else:
+            eta_activity = 0
+    
         prop_function = self.propensity(w_old, self.prop_a)
         hebb = self.hebb_scaling * H * prop_function
         if intrinsic:
-            rand = self.rand_scaling * eta*prop_function
+            rand = self.rand_scaling * (eta + eta_activity) * prop_function
         else:
             rand = 0
         w_new = w_old + (hebb + rand) * self.learning_rate
