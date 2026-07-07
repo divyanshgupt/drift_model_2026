@@ -1,3 +1,6 @@
+import json
+import os
+
 import numpy as np
 from matplotlib import pyplot as plt
 import scipy.stats as stats
@@ -12,7 +15,11 @@ class FeedForward():
     def __init__(self, N=500, N_inh = 500, a = 10, prop_shift=0, theta_stim=90, n_test_angles=100,
                  learning_rate = 0.01, n_days = 28, n_norm_per_day = 1,
                  n_steps_per_norm = 30, init_steps = 300, hebb_scaling = 0.3,
-                 rand_scaling = 1, inh_scale = 1, vars_if_mean=3, vars_ei_mean=3, inh="off", inh_type="co-tuned", 
+                 input_sigma = 25,
+                 rand_scaling = 1, inh_scale = 1, 
+                 vars_if_mean=3, vars_ei_mean=3, vars_ef_mean=2,
+                 activity_dependent_noise = False,
+                 inh="off", inh_type="co-tuned", 
                  norm = True, pre_run=True, seed = 100, set_seed=True):
 
         self.set_seed = set_seed
@@ -26,10 +33,11 @@ class FeedForward():
         self.prop_shift = prop_shift
         self.theta_stim = theta_stim
         self.n_test_angles = n_test_angles
-        
+        self.input_sigma = input_sigma  # Default value, can be overridden
+
         self.inh_type = inh_type
         self.inh_scale = inh_scale
-        self.vars_ef = np.random.lognormal(2, 0.6, N)
+        self.vars_ef = np.random.lognormal(vars_ef_mean, 0.6, N)
         # print(self.vars_ef)
         self.vars_if = np.random.lognormal(vars_if_mean, 0.6, N)
         self.vars_ei = np.random.lognormal(vars_ei_mean, 0.6, N)
@@ -45,6 +53,7 @@ class FeedForward():
 
         self.hebb_scaling = hebb_scaling
         self.rand_scaling = rand_scaling
+        self.activity_dependent_noise = activity_dependent_noise
 
         self.w_ef_init = self.initialise_w_ef(N, self.vars_ef)
 
@@ -152,7 +161,7 @@ class FeedForward():
 
         return w_ei     
 
-    def circular_gaussian(self, N, theta, amp=2, sigma=20, baseline=0):
+    def circular_gaussian(self, N, theta, amp=2, sigma=25, baseline=0):
         """
         Generate pre-synaptic activity based on theta stimulus
         """
@@ -172,13 +181,13 @@ class FeedForward():
         if type == "baseline" or type == "test" : theta = np.random.uniform(0, 180)
         elif type == "stripe_rearing": theta = theta_stim
 
-        r_f = self.circular_gaussian(N, theta, amp=0.62, sigma=60, baseline=0)
+        r_f = self.circular_gaussian(N, theta, amp=0.62, sigma=self.input_sigma, baseline=0)
         r_i = w_if.T.dot(r_f)
 
         r_e = w_ef.T.dot(r_f) - w_ei.T.dot(r_i)
         r_e[r_e < 0] = 0
 
-        return np.outer(r_f, r_e)
+        return np.outer(r_f, r_e), r_f, r_e
 
     def pre_run(self, w_init, init_steps):
         """
@@ -188,10 +197,15 @@ class FeedForward():
         w = w_init
         # self.plot_weights(w, "F->E weights at initialisation")
         for t in range(init_steps):
-            H = self.hebbian_component(self.N, w, self.w_if, self.w_ei, self.theta_stim, type='baseline')
+            H, r_f, r_e = self.hebbian_component(self.N, w, self.w_if, self.w_ei, self.theta_stim, type='baseline')
             eta = np.random.randn(self.N, self.N)
+            if self.activity_dependent_noise:
+                eta_activity = eta * r_e
+            else:
+                eta_activity = 0
+
             prop_function = self.propensity(w, self.a)
-            dw = (self.hebb_scaling * H * prop_function + self.rand_scaling * eta * prop_function) * self.learning_rate
+            dw = (self.hebb_scaling * H * prop_function + self.rand_scaling * (eta + eta_activity) * prop_function) * self.learning_rate
             w += dw
             if t % self.n_steps_per_norm == 0:
                 w = self.normalisation(w)
@@ -203,8 +217,8 @@ class FeedForward():
         
         """
         posts = np.zeros((N, n_angles))
-        for i, angle in enumerate(np.linspace(0, 181, n_angles)):
-            y = self.circular_gaussian(N, angle, amp=1, sigma=5, baseline=0)
+        for i, angle in enumerate(np.linspace(0, 180, n_angles)):
+            y = self.circular_gaussian(N, angle, amp=1, sigma=self.input_sigma, baseline=0)
             inh = self.w_if.T.dot(y)
             posts[:, i] = w.T.dot(y) - self.w_ei.T.dot(inh)
             posts[posts < 0] = 0
@@ -217,11 +231,17 @@ class FeedForward():
         
         """
         # print(f"timestep: {t}, w ={W_old}")
-        H = self.hebbian_component(self.N, W_old, self.w_if, self.w_ei, self.theta_stim, type=type)
+        H, r_f, r_e = self.hebbian_component(self.N, W_old, self.w_if, self.w_ei, self.theta_stim, type=type)
         eta = np.random.randn(self.N, self.N)
+
+        if self.activity_dependent_noise:
+            eta_activity = eta * r_e
+        else:
+            eta_activity = 0
+
         prop_function = self.propensity(W_old, self.a)
         hebb = self.hebb_scaling * H * prop_function
-        rand = self.rand_scaling * eta * prop_function
+        rand = self.rand_scaling * (eta + eta_activity) * prop_function
         w_new = W_old + (hebb + rand) * self.learning_rate
 
         if t % self.n_steps_per_norm == 0:
@@ -279,7 +299,7 @@ class FeedForward():
 
         # take a theta value and compute the activity of each neuron based on its preferred orientation and the circular gaussian function
         for stim_num, theta in enumerate(theta_list):
-            u = circular_gaussian(self.N, theta)
+            u = self.circular_gaussian(self.N, theta, sigma=self.input_sigma)
             i = self.w_if.T.dot(u)
             e = w_ef.T.dot(u) - self.w_ei.T.dot(i)
             e[e < 0] = 0
@@ -304,7 +324,7 @@ class FeedForward():
         responses = np.zeros((self.N, len(theta_list)))
         
         for stim_num, theta in enumerate(theta_list):
-            u = circular_gaussian(self.N, theta)
+            u = self.circular_gaussian(self.N, theta, sigma=self.input_sigma)
             i = self.w_if.T.dot(u)
             e = w_ef.T.dot(u) - self.w_ei.T.dot(i)
             e[e < 0] = 0
@@ -314,10 +334,12 @@ class FeedForward():
         corr = np.corrcoef(responses)  # N x N correlation matrix
         return corr
 
-    def summed_corr_over_time(self, W):
+    def summed_corr_over_time(self, W, sigma=None):
         """
         computes activity correlations between neurons based on given preferred orientation array over time
         """
+        if sigma is None:
+            sigma = self.input_sigma
 
         theta_list = np.linspace(0, 180, 100)
         corr_over_time = np.zeros((W.shape[2]))
@@ -326,7 +348,7 @@ class FeedForward():
         for t in tqdm(range(W.shape[2])):
             corr_over_stim = np.zeros((self.N, self.N, len(theta_list)))    
             for stim_num, theta in enumerate(theta_list):
-                u = circular_gaussian(self.N, theta)
+                u = self.circular_gaussian(self.N, theta, sigma=sigma)
                 i = self.w_if.T.dot(u)
                 e = W[:, :, t].T.dot(u) - self.w_ei.T.dot(i)
                 e[e < 0] = 0
@@ -338,39 +360,6 @@ class FeedForward():
 
         return corr_over_time
 
-    def save_hdf5(self, POs, location):
-
-        drift_mag, drift_rate, convergence = self.get_metrics(self.N, self.n_days, self.theta_stim, POs)
-        f = h5.File(location+'_drift_simulations.hdf5', 'a')
-        i = len(f.keys())
-        sim_group = f.create_group(f"sim_{i}")
-
-        weights = sim_group.create_group("weights")
-        weights.create_dataset("w_ef_init", data=self.w_ef_init)
-        weights.create_dataset("w_if", data=self.w_if)
-        weights.create_dataset("w_ei", data=self.w_ei)
-        weights.create_dataset("W", data=self.W)
-
-        drift_metrics = sim_group.create_group("drift_metrics")
-        drift_metrics.create_dataset("drift_mag", data=drift_mag)
-        drift_metrics.create_dataset("drift_rate", data=drift_rate)
-        drift_metrics.create_dataset("convergence", data=convergence)
-        
-        sim_group.attrs['i_scale'] = self.inh_scale
-        sim_group.attrs['hebb_scale'] = self.hebb_scaling
-        sim_group.attrs['rand_scale'] = self.rand_scaling
-        sim_group.attrs['inh_type'] = self.inh_type
-
-        f.close()
-
-    def params_to_string(self):
-
-        params_dict = {'a': self.a,
-                       'learning_rate': self.learning_rate,
-                       'n_steps': self.n_steps,
-                       'N_inh': self.N_inh,
-                       'n_days': self.n_days,
-                       }
 
 
     def plot_drift_magnitude(self, drift_mag_baseline, title, eo=2):
@@ -420,7 +409,7 @@ class FeedForward():
 
         for theta_idx, theta in enumerate(theta_list):
 
-            r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=5, baseline=0)
+            r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=self.input_sigma, baseline=0)
             r_i = self.w_if.T.dot(r_f)
             r_e = self.w_ef_baseline.T.dot(r_f) - self.w_ei.T.dot(r_i)
             r_e[r_e < 0] = 0
@@ -440,29 +429,416 @@ class FeedForward():
         return tuning_curves, tuning_widths
 
 
-    def estimate_initial_activity(self, probe_angle=60):
+    def estimate_initial_activity(self, probe_angle=60, sigma=None):
         """
         Returns the activity of each neuron to the probe stimulus at a given day
         """
+        if sigma is None:
+            sigma = self.input_sigma
 
-        r_f = self.circular_gaussian(self.N, probe_angle, amp=0.62, sigma=5, baseline=0)
+        r_f = self.circular_gaussian(self.N, probe_angle, amp=0.62, sigma=sigma, baseline=0)
         r_i = self.w_if.T.dot(r_f)
         r_e = self.w_ef_baseline.T.dot(r_f) - self.w_ei.T.dot(r_i)
         r_e[r_e < 0] = 0
 
         return r_e, r_i, r_f
     
-    def estimate_initial_tuning_inh(self):
+    def estimate_initial_tuning_inh(self, sigma=None):
         """
         Returns the tuning curves of the inhibitory population to the test angles
         """
+        if sigma is None:
+            sigma = self.input_sigma
+
         tuning_curves_inh = np.zeros((self.N_inh, self.n_test_angles))
         theta_list = np.linspace(0, 180, self.n_test_angles)
 
         for theta_idx, theta in enumerate(theta_list):
 
-            r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=5, baseline=0)
+            r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
             r_i = self.w_if.T.dot(r_f)
             tuning_curves_inh[:, theta_idx] = r_i
 
         return tuning_curves_inh
+    
+    def estimate_activity_at_day(self, theta, day, sigma=None):
+        if sigma is None:
+            sigma = self.input_sigma
+        
+        stim_idx = day * self.n_norm_per_day * self.n_steps_per_norm
+        w_ef = self.W[:, :, stim_idx]
+
+        r_F = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
+        r_I = self.w_if.T.dot(r_F)
+        r_E = w_ef.T.dot(r_F) - self.w_ei.T.dot(r_I)
+        r_E[r_E < 0] = 0
+
+        return r_E, r_I
+
+    def estimate_tuning_curves_at_day(self, day, sigma=None, width_method='circular'):
+        if sigma is None:
+            sigma = self.input_sigma
+
+        tuning_curves = np.zeros((self.N, self.n_test_angles))
+        theta_list = np.linspace(0, 180, self.n_test_angles)
+
+        stim_idx = day * self.n_norm_per_day * self.n_steps_per_norm
+        w_ef = self.W[:, :, stim_idx]
+        for theta_idx, theta in enumerate(theta_list):
+            r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
+            r_i = self.w_if.T.dot(r_f)
+            r_e = w_ef.T.dot(r_f) - self.w_ei.T.dot(r_i)
+            r_e[r_e < 0] = 0
+            tuning_curves[:, theta_idx] = r_e
+        return tuning_curves
+    
+    def estimate_tuning_curves_over_days(self, sigma=None):
+
+        if sigma is None:
+            sigma = self.input_sigma
+
+        theta_list = np.linspace(0, 180, self.n_test_angles)
+        
+        tuning_curves_over_days = []
+
+        for day in tqdm(range(self.n_days), desc='days'):
+            tuning_curves = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            tuning_curves_over_days.append(tuning_curves)
+
+        return np.array(tuning_curves_over_days)
+
+
+    def plot_weights_complete(self, savefig=False):
+
+        fig, axs = plt.subplots(1, 3, figsize=(12, 4), dpi=180)
+        # plot F->E weights
+        im1 = axs[0].imshow(self.w_ef_baseline)
+        axs[0].set_title("F->E weights at baseline")
+        axs[0].set_ylabel("post")
+        axs[0].set_xlabel("pre")
+        fig.colorbar(im1, ax=axs[0])
+
+        # plot F->I weights
+        im2 = axs[1].imshow(self.w_if)
+        axs[1].set_title("F->I weights")
+        axs[1].set_ylabel("post")
+        axs[1].set_xlabel("pre")
+        fig.colorbar(im2, ax=axs[1])
+
+        # plot I->E weights
+        im3 = axs[2].imshow(self.w_ei)
+        axs[2].set_title("I->E weights")
+        axs[2].set_ylabel("post")
+        axs[2].set_xlabel("pre")
+        fig.colorbar(im3, ax=axs[2])
+        fig.tight_layout()
+
+        if savefig:
+            fig.savefig(self.save_location + "weights_complete.svg")
+
+    def plot_drift_metrics(self, drift_mag, drift_rate, convergence, savefig=False,
+                           figsize=(10, 3)):
+
+        fig, axs = plt.subplots(1, 3, figsize=figsize)
+
+        drift_mag_mean = np.nanmean(drift_mag, axis=1)
+        drift_mag_std = np.nanstd(drift_mag, axis=1)/np.sqrt(drift_mag.shape[1])
+        axs[0].plot(drift_mag_mean, marker='o', ms=4, clip_on=False)
+        axs[0].fill_between(range(len(drift_mag_mean)), drift_mag_mean - drift_mag_std, drift_mag_mean + drift_mag_std, alpha=0.2)
+        axs[0].set_title("Drift Magnitude")
+        axs[0].set_xlabel("Day")
+        axs[0].set_ylabel("Degrees")
+        axs[0].set_ylim([-1, 5])
+
+        drift_rate_mean = np.nanmean(drift_rate, axis=1)
+        drift_rate_std = np.nanstd(drift_rate, axis=1)/np.sqrt(drift_rate.shape[1])
+        axs[1].plot(drift_rate_mean, marker='o', ms=4, clip_on=False)
+        axs[1].fill_between(range(len(drift_rate_mean)), drift_rate_mean - drift_rate_std, drift_rate_mean + drift_rate_std, alpha=0.2)
+        axs[1].set_title("Drift Rate")
+        axs[1].set_xlabel("Day")
+        axs[1].set_ylabel("Degrees/day")
+        axs[1].set_ylim([-1, 5])
+
+        convergence_mean = np.nanmean(convergence, axis=1)
+        convergence_std = np.nanstd(convergence, axis=1)/np.sqrt(convergence.shape[1])
+        axs[2].plot(convergence_mean, marker='o', ms=4, clip_on=False)
+        axs[2].fill_between(range(len(convergence_mean)), convergence_mean - convergence_std, convergence_mean + convergence_std, alpha=0.2)
+        axs[2].set_title("Convergence")
+        axs[2].set_xlabel("Day")
+        axs[2].set_ylabel("Degrees")
+        axs[2].set_ylim([-1, 5])
+
+        fig.tight_layout()
+        if savefig:
+            fig.savefig(self.save_location+"drift_metrics.png", dpi=300)
+        fig.show()
+
+
+    def plot_drift_metric_distributions(self, drift_mag, drift_rate, convergence, savefig=False, figsize=(10, 3)):
+
+        fig, axs = plt.subplots(1, 3, figsize=figsize)
+
+        axs[0].hist(drift_mag[-1, :], bins='fd', alpha=0.7)
+        axs[0].set_title("Drift Magnitude Distribution")
+        axs[0].set_xlabel("Degrees")
+        axs[0].set_ylabel("Frequency")
+
+        axs[1].hist(drift_rate[-1, :], bins='fd', alpha=0.7)
+        axs[1].set_title("Drift Rate Distribution")
+        axs[1].set_xlabel("Degrees/day")
+        axs[1].set_ylabel("Frequency")
+
+        axs[2].hist(convergence[-1, :], bins='fd', alpha=0.7)
+        axs[2].set_title("Convergence Distribution")
+        axs[2].set_xlabel("Degrees")
+        axs[2].set_ylabel("Frequency")
+
+        fig.tight_layout()
+        if savefig:
+            fig.savefig(self.save_location+"drift_metric_distributions.png", dpi=300)
+        fig.show()
+
+    def plot_initial_vs_final_tuning_curves(self, sigma=None):
+
+        if sigma is None:
+            sigma = self.input_sigma
+
+        initial_tuning_curves = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+        final_tuning_curves = self.estimate_tuning_curves_at_day(self.n_days-1, sigma=sigma)
+
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
+        for neuron_idx in range(0, self.N, 15): # plot every 30th neuron for visibility
+            axs[0].plot(theta_list, initial_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
+            axs[1].plot(theta_list, final_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
+        axs[0].set_title(f"Initial Tuning Curves")
+        axs[1].set_title(f"Final Tuning Curves")
+        for ax in axs:
+            ax.set_xlabel("Stimulus Angle")
+            ax.set_ylabel("Firing Rate")
+        fig.tight_layout()
+        fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
+        fig.show()
+
+    def plot_drift_against_tuning(self, drift_mag, tuning_widths, savefig=False):
+        
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.scatter(tuning_widths, drift_mag, alpha=0.5)
+        ax.set_xlabel("Tuning Width")
+        ax.set_ylabel("Drift Magnitude")
+        ax.set_title("Drift Magnitude vs Tuning Width")
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        fig.tight_layout()
+        if savefig:
+            fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
+        fig.show()
+
+    def plot_POs_initial_vs_final(self):
+        initial_POs = self.POs[0]
+        final_POs = self.POs[-1]
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.scatter(initial_POs, final_POs, alpha=0.5)
+        ax.plot([0, 180], [0, 180], 'r--')  # reference line
+        ax.set_xlabel("Initial Preferred Orientation")
+        ax.set_ylabel("Final Preferred Orientation")
+        ax.set_title("Initial vs Final Preferred Orientations")
+        fig.tight_layout()
+        fig.savefig(self.save_location+"POs_initial_vs_final.png", dpi=300)
+        fig.show()
+
+    def create_tuning_curves_animation(self, skip_freq=15, sigma=None):
+
+        import matplotlib.animation as animation
+
+        offset = 0.028
+        neuron_indices = list(range(0, self.N, skip_freq))
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+        max_ylim = offset * neuron_indices[-1] + 2
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
+        ax.set_xlim(0, 180)
+        ax.set_ylim(0, max_ylim)
+        ax.set_xlabel("Stimulus Angle")
+        ax.set_ylabel("Firing Rate")
+        fig.suptitle("Tuning Curve Evolution")
+
+        lines = []
+
+        def init():
+            for l in lines:
+                l.remove()
+            lines.clear()
+            tuning_curves = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+            for nrn_idx in neuron_indices:
+                l, = ax.plot(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx, color='black')
+                lines.append(l)
+            return lines
+
+        def animate(day):
+            tuning_curves = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            for l, nrn_idx in zip(lines, neuron_indices):
+                l.set_data(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx)
+            ax.set_title(f"Day {day}")
+            return lines
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=self.n_days, interval=500, blit=True)
+
+        save_path = self.save_location + "tuning_curve_evolution.gif"
+        anim.save(save_path, writer='imagemagick')
+
+    def create_single_cell_tuning_curve_animation(self, tuning_curve_over_days, cell_idx):
+
+        import matplotlib.animation as animation
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
+        ax.set_xlim(0, 180)
+        ax.set_ylim(0, 4)
+        ax.set_xlabel("Stimulus Angle")
+        ax.set_ylabel("Firing Rate")
+        fig.suptitle(f"Tuning Curve Evolution of Cell {cell_idx}")
+
+        line, = ax.plot([], [], color='blue')
+
+        def init():
+            line.set_data([], [])
+            return line,
+
+        def animate(day):
+            theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+            line.set_data(theta_list, tuning_curve_over_days[day, :])
+            ax.set_title(f"Day {day}")
+            return line,
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=self.n_days, interval=500, blit=True)
+
+        save_path = self.save_location + f"tuning_curve_evolution_cell_{cell_idx}.gif"
+        anim.save(save_path, writer='imagemagick')
+
+    def create_pop_activity_animation(self, theta, sigma=None):
+        """
+        Animate population activity over days for a given stimulus.
+        """
+        if sigma is None:
+            sigma = self.input_sigma
+
+        import matplotlib.animation as animation
+
+        fig, ax = plt.subplots(2, 1, figsize=(6, 4), dpi=200)
+
+        ax[0].set_xlim(0, self.N)
+        ax[0].set_ylim(0, 4)
+        ax[0].set_xlabel("Neuron Index")
+        ax[0].set_ylabel("Firing Rate")
+        ax[1].set_xlim(0, self.N_inh)
+        ax[1].set_ylim(0, 4)
+        ax[1].set_xlabel("Neuron Index")
+        ax[1].set_ylabel("Firing Rate")
+
+        fig.suptitle(f"Population Activity Evolution for Stimulus {theta:.1f}")
+
+        line_E, = ax[0].plot([], [], marker='.', ms=4, color='blue')
+        line_I, = ax[1].plot([], [], marker='.', ms=4, color='red')
+
+        def init():
+            line_E.set_data([], [])
+            line_I.set_data([], [])
+            return line_E, line_I,
+
+        def animate(day):
+            r_E, r_I = self.estimate_activity_at_day(theta, day, sigma=sigma)
+            line_E.set_data(range(self.N), r_E)
+            line_I.set_data(range(self.N_inh), r_I)
+            ax[0].set_title(f"Day {day}")
+            return line_E, line_I,
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                       frames=self.n_days, interval=500, blit=True)
+
+        save_path = self.save_location + f"population_activity_evolution_theta_{theta:.1f}.gif"
+        anim.save(save_path, writer='imagemagick')
+        
+    def run_analysis(self, saveloc=None, save_results=False):
+
+        # work on this
+        POs = self.get_POs_over_trials(self.w_ef_baseline, self.n_steps, type="baseline")
+        drift_mag, drift_rate, convergence = self.get_metrics(self.N, self.n_days, self.theta_stim, POs)
+
+        self.save_location = saveloc
+        os.makedirs(saveloc, exist_ok=True)
+        
+        self.plot_weights_complete(savefig=True)
+        self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
+        self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
+        tuning_widths_assigned = self.vars_ef
+        self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
+        self.plot_initial_vs_final_tuning_curves()
+        tuning_curves_over_days = self.estimate_tuning_curves_over_days()
+        self.create_tuning_curves_animation()
+        self.create_single_cell_tuning_curve_animation(tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
+        self.plot_POs_initial_vs_final()
+        # self.create_pop_activity_animation()
+
+        if save_results:
+            self.save_results(drift_mag, drift_rate, convergence, save_weights=False)
+        
+        # [x] initial weights
+        # [x] drift metrics over time
+        # [x] final drift metric distributions
+        # [x] drift against initial tuning width assigned (vars_ef)
+        
+        # [x] tuning curves initial and final
+        # [x] POs initial vs final
+        # [x] tuning curves animation
+        # [x] single cell tuning curve animation
+        # [x] population activity animation
+
+        return None
+
+    def save_results(self, drift_mag, drift_rate, convergence, save_weights=False):
+
+        with h5.File(self.save_location + 'results.hdf5', 'w') as f:
+
+            if save_weights:
+                f.create_dataset("W", data=self.W)
+                f.create_dataset("w_ef_baseline", data=self.w_ef_baseline)
+                f.create_dataset("w_if", data=self.w_if)
+                f.create_dataset("w_ei", data=self.w_ei)
+
+            f.create_dataset("POs", data=self.POs)
+            f.create_dataset("vars_ef", data=self.vars_ef)
+            f.create_dataset("drift_mag", data=drift_mag)
+            f.create_dataset("drift_rate", data=drift_rate)
+            f.create_dataset("convergence", data=convergence)
+
+        params = {
+            "N": self.N,
+            "N_inh": self.N_inh,
+            "a": self.a,
+            "prop_shift": self.prop_shift,
+            "theta_stim": self.theta_stim,
+            "n_test_angles": self.n_test_angles,
+            "learning_rate": self.learning_rate,
+            "n_days": self.n_days,
+            "n_norm_per_day": self.n_norm_per_day,
+            "n_steps_per_norm": self.n_steps_per_norm,
+            "init_steps": self.init_steps,
+            "hebb_scaling": self.hebb_scaling,
+            "rand_scaling": self.rand_scaling,
+            "inh_scale": self.inh_scale,
+            "inh_type": self.inh_type,
+            "vars_if_mean": self.vars_if.mean(),
+            "vars_ei_mean": self.vars_ei.mean(),
+            "vars_ef_mean": self.vars_ef.mean(),
+            "input_sigma": self.input_sigma,
+            "norm": self.norm,
+            "seed": self.seed
+        }
+
+        with open(self.save_location + "hyperparameters.json", 'w') as f:
+            json.dump(params, f, indent=4)
+        pass
