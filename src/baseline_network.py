@@ -37,8 +37,10 @@ class BaselineNetwork():
                   inh_mod_type="weight_mod", # hyperpolarizing or weight_mod
                   inh_input_scale = 1,
                   norm=True, set_seed=True, seed=42, inh_scale=1, E_to_I_scale=1,
+                  hebb_scaling=0.3, rand_scaling=1.0, n_days=28,
                   if_pre_run=True, n_pre_run_stimuli=300,
                   train_sigma=25, probe_sigma=25,
+                  record_hebb_vs_intrinsic=False,
                   activity_dependent_noise=False,
                   save_location="../results/recurrent_complete/feedforward_subset/"):
 
@@ -79,14 +81,15 @@ class BaselineNetwork():
         if self.set_seed:
             np.random.seed(self.seed)
 
-        self.setup_params()
+        self.setup_params(hebb_scaling, rand_scaling, n_days)
         self.setup_weights()
         self.setup_inh_input()
+        self.record_hebb_vs_intrinsic = record_hebb_vs_intrinsic
         # self.plot_initial_weights()
 
         self.setup_inh_timeline()
     
-    def setup_params(self):
+    def setup_params(self, hebb_scaling, rand_scaling, n_days):
 
         self.N = 400
         self.N_inh = 100
@@ -100,8 +103,8 @@ class BaselineNetwork():
         self.prop_shift = 0
 
         self.learning_rate = 0.01
-        self.hebb_scaling = 0.3
-        self.rand_scaling = 1.0
+        self.hebb_scaling = hebb_scaling
+        self.rand_scaling = rand_scaling
 
         self.input_sigma = self.train_sigma
         
@@ -114,7 +117,7 @@ class BaselineNetwork():
         if self.I_to_I == "on":
             self.vars_ii_mean = 2
 
-        self.n_days = 28
+        self.n_days = n_days
         self.n_test_angles = 500
 
         self.T_seq = 200 # dt steps per stimulus (should be >> tau to allow settling)
@@ -163,7 +166,7 @@ class BaselineNetwork():
         self.vars_ee = np.random.lognormal(mean=self.vars_ee_mean, sigma=0.6, size=self.N)
         self.vars_ie = np.random.lognormal(mean=self.vars_ie_mean, sigma=0.6, size=self.N_inh)
 
-        #    feedforward weights
+        # feedforward weights
         self.w_ef = self.gaussian_weights(self.N, self.N, self.vars_ef) # feedforward weights
         self.w_if = self.gaussian_weights(self.N, self.N_inh, self.vars_if) # feedforward input to inhibition
         if self.inh_type == "co-tuned":
@@ -214,6 +217,8 @@ class BaselineNetwork():
         self.W_ii = np.zeros((self.N_inh, self.N_inh, self.n_stim_total + 1))
         if self.I_to_I == "on":
             self.W_ii[:, :, 0] = self.w_ii.copy()
+
+        self.hebb_to_intrinsic_ratio_hist = np.zeros((self.N, self.N, self.n_stim_total + 1))
 
         return None
     
@@ -394,7 +399,8 @@ class BaselineNetwork():
         eta = np.random.randn(*w_old.shape)
         
         if self.activity_dependent_noise:
-            eta_activity = eta * r_post[:, np.newaxis] # check this
+            # eta_activity = eta * r_post[:, np.newaxis] # check this
+            eta_activity = eta * r_post
         else:
             eta_activity = 0
     
@@ -691,6 +697,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+f"population_tuning_curves_day_{day}.png", dpi=300)
         fig.show()
+        plt.close(fig)
     
 
     def plot_cell_tuning_curve(self, cell_idx, day, sigma=None, savefig=False):
@@ -709,6 +716,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+f"tuning_curve_cell_{cell_idx}_day_{day}.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_initial_weights(self, savefig=False):
 
@@ -731,6 +739,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+"initial_weights.png", dpi=300)
         fig.show()   
+        plt.close(fig)
 
     def plot_weights(self, savefig=False):
 
@@ -753,6 +762,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+"final_weights.png", dpi=300)
         fig.show()
+        plt.close(fig)
           
 
     def plot_drift_metrics(self, drift_mag, drift_rate, convergence, savefig=False,
@@ -791,6 +801,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+"drift_metrics.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_drift_metric_distributions(self, drift_mag, drift_rate, convergence, savefig=False, figsize=(10, 3)):
 
@@ -815,6 +826,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+"drift_metric_distributions.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_activity_at_day(self, day, theta, sigma=None, savefig=False):
 
@@ -847,6 +859,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+f"activity_day_{day}_theta_{theta:.1f}.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_drift_against_tuning(self, drift_mag, tuning_widths, savefig=False):
         
@@ -861,6 +874,7 @@ class BaselineNetwork():
         if savefig:
             fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_initial_vs_final_tuning_curves(self, sigma=None):
 
@@ -884,6 +898,7 @@ class BaselineNetwork():
         fig.tight_layout()
         fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def plot_initial_vs_final_tuning_width_distributions(self, sigma=None):
 
@@ -901,6 +916,7 @@ class BaselineNetwork():
         fig.tight_layout()
         fig.savefig(self.save_location+"initial_vs_final_tuning_width_distributions.png", dpi=300)
         fig.show()
+        plt.close(fig)
 
     def create_tuning_curve_animation(self, skip_freq=15, sigma=None):
 
