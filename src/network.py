@@ -216,15 +216,17 @@ class FeedForward():
         """
         
         """
+        angles = np.linspace(0, 180, n_angles)
         posts = np.zeros((N, n_angles))
-        for i, angle in enumerate(np.linspace(0, 180, n_angles)):
+        for i, angle in enumerate(angles):
             y = self.circular_gaussian(N, angle, amp=1, sigma=self.input_sigma, baseline=0)
             inh = self.w_if.T.dot(y)
             posts[:, i] = w.T.dot(y) - self.w_ei.T.dot(inh)
             posts[posts < 0] = 0
             # posts[:, i] = w.T.dot(y)
 
-        return 180 * np.argmax(posts, axis=1) / n_angles
+        return angles[np.argmax(posts, axis=1)]  # return the angle corresponding to the max response for each neuron
+        # return 180 * np.argmax(posts, axis=1) / n_angles
 
     def evolve_W(self, W_old, t, type):
         """
@@ -277,7 +279,7 @@ class FeedForward():
         """
         preferences = np.array(POs).T
         initial_preferences = np.linspace(0, 180, N)
-        # initial_preferences = preferences[:, 0]
+        initial_preferences = preferences[:, 0]
 
         drift_magnitude = np.array([self.circular_dist(preferences[:, day], initial_preferences) for day in range(n_days)])
         drift_rate = np.array([self.circular_dist(preferences[:, day+1], preferences[:, day]) for day in range(n_days-1)])
@@ -535,6 +537,7 @@ class FeedForward():
 
         if savefig:
             fig.savefig(self.save_location + "weights_complete.svg")
+        fig.close()
 
     def plot_drift_metrics(self, drift_mag, drift_rate, convergence, savefig=False,
                            figsize=(10, 3)):
@@ -572,7 +575,7 @@ class FeedForward():
         if savefig:
             fig.savefig(self.save_location+"drift_metrics.png", dpi=300)
         fig.show()
-
+        fig.close()
 
     def plot_drift_metric_distributions(self, drift_mag, drift_rate, convergence, savefig=False, figsize=(10, 3)):
 
@@ -597,6 +600,7 @@ class FeedForward():
         if savefig:
             fig.savefig(self.save_location+"drift_metric_distributions.png", dpi=300)
         fig.show()
+        fig.close()
 
     def plot_initial_vs_final_tuning_curves(self, sigma=None):
 
@@ -620,6 +624,7 @@ class FeedForward():
         fig.tight_layout()
         fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
         fig.show()
+        fig.close()
 
     def plot_drift_against_tuning(self, drift_mag, tuning_widths, savefig=False):
         
@@ -634,6 +639,7 @@ class FeedForward():
         if savefig:
             fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
         fig.show()
+        fig.close()
 
     def plot_POs_initial_vs_final(self):
         initial_POs = self.POs[0]
@@ -648,6 +654,7 @@ class FeedForward():
         fig.tight_layout()
         fig.savefig(self.save_location+"POs_initial_vs_final.png", dpi=300)
         fig.show()
+        fig.close()
 
     def create_tuning_curves_animation(self, skip_freq=15, sigma=None):
 
@@ -785,6 +792,8 @@ class FeedForward():
 
         if save_results:
             self.save_results(drift_mag, drift_rate, convergence, save_weights=False)
+
+        plt.close('all')
         
         # [x] initial weights
         # [x] drift metrics over time
