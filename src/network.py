@@ -6,9 +6,12 @@ from matplotlib import pyplot as plt
 import scipy.stats as stats
 from tqdm import tqdm
 import h5py as h5
+from pycircstat2.descriptive import circ_mean_and_r, circ_dist
 
 from helper_functions import circular_gaussian
 
+plt.rcParams["axes.spines.top"] = False
+plt.rcParams["axes.spines.right"] = False
 
 class FeedForward():
 
@@ -20,23 +23,32 @@ class FeedForward():
                  vars_if_mean=3, vars_ei_mean=3, vars_ef_mean=2,
                  activity_dependent_noise = False,
                  inh="off", inh_type="co-tuned", 
+                 inh_mod_type = "weight_mod",
+                 inh_input_scale = 1,
+                 weight_clipping = False,
+                 PO_method='circular_mean',
                  norm = True, pre_run=True, seed = 100, set_seed=True):
 
         self.set_seed = set_seed
         self.seed = seed
         if self.set_seed:
-            print(f"setting seed: {seed}")
+            # print(f"setting seed: {seed}")
             np.random.seed(self.seed)
         self.N = N
         self.N_inh = N_inh
         self.a = a
         self.prop_shift = prop_shift
+        self.weight_clipping = weight_clipping
         self.theta_stim = theta_stim
         self.n_test_angles = n_test_angles
         self.input_sigma = input_sigma  # Default value, can be overridden
 
+        self.PO_method = PO_method
         self.inh_type = inh_type
         self.inh_scale = inh_scale
+        self.inh_mod_type = inh_mod_type
+        self.inh_input_scale = inh_input_scale
+
         self.vars_ef = np.random.lognormal(vars_ef_mean, 0.6, N)
         # print(self.vars_ef)
         self.vars_if = np.random.lognormal(vars_if_mean, 0.6, N)
@@ -58,23 +70,27 @@ class FeedForward():
         self.w_ef_init = self.initialise_w_ef(N, self.vars_ef)
 
         if inh == "on":
-            self.w_if = inh_scale * self.initialise_w_if(N_inh, self.vars_if, inh_type)
-            self.w_ei = inh_scale * self.initialise_w_ei(N_inh, self.vars_ei, inh_type)
+            self.w_if = self.initialise_w_if(N_inh, self.vars_if, inh_type)
+            self.w_ei = self.initialise_w_ei(N_inh, self.vars_ei, inh_type)
         else:
             self.w_if = np.zeros((N, N_inh))
             self.w_ei = np.zeros((N_inh, N))
+
+        self.setup_inh_input()
 
         if pre_run:
             self.w_ef_baseline = self.pre_run(self.w_ef_init, self.init_steps)
         else:
             self.w_ef_baseline = self.w_ef_init
 
+
+
     def propensity(self, w, a):
         """
         tanh function
         """
-
         return np.tanh(a*w + self.prop_shift)
+
 
     def circular_dist(self, x, y):
         """
@@ -93,6 +109,16 @@ class FeedForward():
         else:
             return w
 
+    def setup_inh_input(self):
+
+        if self.inh_mod_type == "hyperpolarizing":
+            self.inh_input = - 0.1 * self.inh_input_scale * np.ones(self.N_inh)
+
+        elif self.inh_mod_type == "weight_mod":
+            self.inh_input = np.zeros(self.N_inh)
+            self.w_ei *= self.inh_scale
+            self.w_if *= self.inh_scale
+    
     def initialise_w_ef(self, N, vars_ef):
         """
         stimulus pop (F) to exc pop (E) weights
@@ -106,6 +132,11 @@ class FeedForward():
         w_ef = matrix/N
         w_ef /= np.sum(w_ef, axis=0)
 
+        if self.weight_clipping:
+            # self.w_clip_max = np.max(w_ef) * 1.5
+            # derive a clip from the 99 percentile of the vars_ef lognormal distribution
+            self.w_clip_max = np.percentile(w_ef.flatten(), 99) * 1.5
+            print(f"weight clipping enabled, max weight set to: {self.w_clip_max}")
         return w_ef
 
     def initialise_w_if(self, N_inh, vars_if, inh_type="co-tuned"):
@@ -182,14 +213,14 @@ class FeedForward():
         elif type == "stripe_rearing": theta = theta_stim
 
         r_f = self.circular_gaussian(N, theta, amp=0.62, sigma=self.input_sigma, baseline=0)
-        r_i = w_if.T.dot(r_f)
+        r_i = np.maximum(0, w_if.T.dot(r_f) + self.inh_input)
 
         r_e = w_ef.T.dot(r_f) - w_ei.T.dot(r_i)
-        r_e[r_e < 0] = 0
+        r_e[r_e < 0] = 0    
 
         return np.outer(r_f, r_e), r_f, r_e
 
-    def pre_run(self, w_init, init_steps):
+    def pre_run(self, w_init, init_steps, type='baseline'):
         """
         initial evolution of weights
         """
@@ -197,7 +228,7 @@ class FeedForward():
         w = w_init
         # self.plot_weights(w, "F->E weights at initialisation")
         for t in range(init_steps):
-            H, r_f, r_e = self.hebbian_component(self.N, w, self.w_if, self.w_ei, self.theta_stim, type='baseline')
+            H, r_f, r_e = self.hebbian_component(self.N, w, self.w_if, self.w_ei, self.theta_stim, type=type)
             eta = np.random.randn(self.N, self.N)
             if self.activity_dependent_noise:
                 eta_activity = eta * r_e
@@ -205,28 +236,42 @@ class FeedForward():
                 eta_activity = 0
 
             prop_function = self.propensity(w, self.a)
+
             dw = (self.hebb_scaling * H * prop_function + self.rand_scaling * (eta + eta_activity) * prop_function) * self.learning_rate
             w += dw
+            if self.weight_clipping:
+                w = np.clip(w, 0, self.w_clip_max)  # Clip weights to be non-negative
+
             if t % self.n_steps_per_norm == 0:
                 w = self.normalisation(w)
         # self.plot_weights(w, f"F->I weights after {self.init_steps} prerun steps")
         return w
 
-    def get_preferred_orientations(self, N, w, n_angles):
+    def get_preferred_orientations(self, N, w, n_angles, method='circular_mean', min_r=0.05):
         """
         
         """
         angles = np.linspace(0, 180, n_angles)
-        posts = np.zeros((N, n_angles))
-        for i, angle in enumerate(angles):
-            y = self.circular_gaussian(N, angle, amp=1, sigma=self.input_sigma, baseline=0)
-            inh = self.w_if.T.dot(y)
-            posts[:, i] = w.T.dot(y) - self.w_ei.T.dot(inh)
-            posts[posts < 0] = 0
-            # posts[:, i] = w.T.dot(y)
+        activity = np.zeros((N, n_angles))
+        for angle_idx, angle in enumerate(angles):
+            y = self.circular_gaussian(N, angle, amp=0.62, sigma=self.input_sigma, baseline=0)
+            inh = np.maximum(0, self.w_if.T.dot(y) + self.inh_input)
+            activity[:, angle_idx] = w.T.dot(y) - self.w_ei.T.dot(inh)
+            activity[activity < 0] = 0
 
-        return angles[np.argmax(posts, axis=1)]  # return the angle corresponding to the max response for each neuron
-        # return 180 * np.argmax(posts, axis=1) / n_angles
+        if method == 'argmax':
+            return np.where(activity.max(axis=1) > 0, angles[np.argmax(activity, axis=1)], np.nan)
+        elif method == 'circular_mean':
+            alpha2 = 2 * np.deg2rad(angles)
+            POs = np.full(N, np.nan)
+            for i in range(N):
+                if activity[i].sum() <= 1e-12: # silent: skip, avoids nan warning
+                    continue
+                mu, r = circ_mean_and_r(alpha2, w=activity[i])
+                if np.isnan(mu) or r < min_r: # untuned: no meaningful PO
+                    continue
+                POs[i] = (np.rad2deg(mu) / 2) % 180 # halve back to [0, 180)
+            return POs
 
     def evolve_W(self, W_old, t, type):
         """
@@ -246,11 +291,17 @@ class FeedForward():
         rand = self.rand_scaling * (eta + eta_activity) * prop_function
         w_new = W_old + (hebb + rand) * self.learning_rate
 
+        if self.weight_clipping:
+            w_new = np.clip(w_new, 0, self.w_clip_max)
+
         if t % self.n_steps_per_norm == 0:
             w_new = self.normalisation(w_new)
 
             if t % (self.n_steps_per_norm * self.n_norm_per_day) == 0:
-                PO = self.get_preferred_orientations(self.N, W_old, n_angles=self.n_test_angles)
+                PO = self.get_preferred_orientations(self.N, w_new,
+                                                      method=self.PO_method,
+                                                      min_r=0.05,
+                                                      n_angles=self.n_test_angles)
                 # print(f"timestep: {t}, POs: {PO}")
                 self.POs.append(PO)
         return w_new
@@ -296,13 +347,13 @@ class FeedForward():
         computes activity correlations between neurons based on given preferred orientation array over time
         """
 
-        theta_list = np.linspace(0, 180, 100)
+        theta_list = np.linspace(0, 180, 100, endpoint=False)
         corr = np.zeros((self.N, self.N, len(theta_list)))
 
         # take a theta value and compute the activity of each neuron based on its preferred orientation and the circular gaussian function
         for stim_num, theta in enumerate(theta_list):
             u = self.circular_gaussian(self.N, theta, sigma=self.input_sigma)
-            i = self.w_if.T.dot(u)
+            i = np.maximum(0, self.w_if.T.dot(u) + self.inh_input)
             e = w_ef.T.dot(u) - self.w_ei.T.dot(i)
             e[e < 0] = 0
             corr[:, :, stim_num] = self.corr_function(e)
@@ -322,12 +373,12 @@ class FeedForward():
         uses np.corrcoef to compute correlations across neurons based on their responses to different stimuli,
         which is more efficient than computing pairwise correlations for each stimulus and then averaging.
         """
-        theta_list = np.linspace(0, 180, 100)
+        theta_list = np.linspace(0, 180, 100, endpoint=False)
         responses = np.zeros((self.N, len(theta_list)))
         
         for stim_num, theta in enumerate(theta_list):
             u = self.circular_gaussian(self.N, theta, sigma=self.input_sigma)
-            i = self.w_if.T.dot(u)
+            i = np.maximum(0, self.w_if.T.dot(u) + self.inh_input)
             e = w_ef.T.dot(u) - self.w_ei.T.dot(i)
             e[e < 0] = 0
             responses[:, stim_num] = e
@@ -343,7 +394,7 @@ class FeedForward():
         if sigma is None:
             sigma = self.input_sigma
 
-        theta_list = np.linspace(0, 180, 100)
+        theta_list = np.linspace(0, 180, 100, endpoint=False)
         corr_over_time = np.zeros((W.shape[2]))
 
         # take a theta value and compute the activity of each neuron based on its preferred orientation and the circular gaussian function
@@ -351,7 +402,7 @@ class FeedForward():
             corr_over_stim = np.zeros((self.N, self.N, len(theta_list)))    
             for stim_num, theta in enumerate(theta_list):
                 u = self.circular_gaussian(self.N, theta, sigma=sigma)
-                i = self.w_if.T.dot(u)
+                i = np.maximum(0, self.w_if.T.dot(u) + self.inh_input)
                 e = W[:, :, t].T.dot(u) - self.w_ei.T.dot(i)
                 e[e < 0] = 0
                 corr_over_stim[:, :, stim_num] = self.corr_function(e)
@@ -362,26 +413,6 @@ class FeedForward():
 
         return corr_over_time
 
-
-
-    def plot_drift_magnitude(self, drift_mag_baseline, title, eo=2):
-        """
-        Plot drift magnitude over time
-        """
-        fig, ax = plt.subplots(1, 1, figsize=(3, 2), dpi=180)
-        ax.plot(np.arange(1, self.n_days)[::eo], np.median(drift_mag_baseline, axis=1)[:-1][::eo],
-                 c='black', ls='-', marker='o', ms=4, label='Baseline')
-        
-        ax.set_ylim([0, 5])
-        ax.set_yticks([0, 5])
-        ax.set_xlabel('time since start [days]')
-        ax.set_ylabel(r'drift magnitude $ \; [\degree]$')
-        ax.set_xlim(0, 30)
-        ax.legend(frameon=False, fontsize=8)
-        ax.set_title(title)
-        fig.tight_layout()
-        fig.show()
-        return fig
 
     def plot_weights(self, weights, title):
         """
@@ -407,12 +438,12 @@ class FeedForward():
             tuning_widths : array of shape (N,) containing the estimated tuning width of each neuron based on its tuning curve
         """
         tuning_curves = np.zeros((self.N, self.n_test_angles))
-        theta_list = np.linspace(0, 180, self.n_test_angles)
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         for theta_idx, theta in enumerate(theta_list):
 
             r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=self.input_sigma, baseline=0)
-            r_i = self.w_if.T.dot(r_f)
+            r_i = np.maximum(0, self.w_if.T.dot(r_f) + self.inh_input)
             r_e = self.w_ef_baseline.T.dot(r_f) - self.w_ei.T.dot(r_i)
             r_e[r_e < 0] = 0
             tuning_curves[:, theta_idx] = r_e
@@ -430,6 +461,39 @@ class FeedForward():
         
         return tuning_curves, tuning_widths
 
+    def circular_FWHM(self, x, y):
+            """
+            Calculate FWHM for circular data by rolling the tuning curve so the peak is in the center,
+            then finding the width at half max as usual.
+            """
+            peak_idx = np.argmax(y)
+            center = len(y) // 2
+            y_rolled = np.roll(y, center - peak_idx)   # shift peak to middle
+    
+            half_max = np.max(y_rolled) / 2
+            indices = np.where(y_rolled >= half_max)[0]
+            if len(indices) < 2:
+                return np.nan
+    
+            dx = x[1] - x[0]   # degrees per bin
+            return (indices[-1] - indices[0]) * dx
+    
+    def estimate_tuning_widths_over_days(self, sigma=None):
+        """
+        Returns the tuning widths of each neuron to the test angles over days
+        """
+        if sigma is None:
+            sigma = self.input_sigma
+
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
+        tuning_widths_over_days = np.zeros((self.n_days, self.N))
+
+        for day in tqdm(range(self.n_days), desc='days'):
+            tuning_curves_E, _ = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            for neuron_idx in range(self.N):
+                tuning_widths_over_days[day, neuron_idx] = self.circular_FWHM(theta_list, tuning_curves_E[neuron_idx, :])
+
+        return tuning_widths_over_days
 
     def estimate_initial_activity(self, probe_angle=60, sigma=None):
         """
@@ -439,7 +503,7 @@ class FeedForward():
             sigma = self.input_sigma
 
         r_f = self.circular_gaussian(self.N, probe_angle, amp=0.62, sigma=sigma, baseline=0)
-        r_i = self.w_if.T.dot(r_f)
+        r_i = np.maximum(0, self.w_if.T.dot(r_f) + self.inh_input)
         r_e = self.w_ef_baseline.T.dot(r_f) - self.w_ei.T.dot(r_i)
         r_e[r_e < 0] = 0
 
@@ -453,12 +517,12 @@ class FeedForward():
             sigma = self.input_sigma
 
         tuning_curves_inh = np.zeros((self.N_inh, self.n_test_angles))
-        theta_list = np.linspace(0, 180, self.n_test_angles)
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         for theta_idx, theta in enumerate(theta_list):
 
             r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
-            r_i = self.w_if.T.dot(r_f)
+            r_i = np.maximum(0, self.w_if.T.dot(r_f) + self.inh_input)
             tuning_curves_inh[:, theta_idx] = r_i
 
         return tuning_curves_inh
@@ -471,43 +535,48 @@ class FeedForward():
         w_ef = self.W[:, :, stim_idx]
 
         r_F = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
-        r_I = self.w_if.T.dot(r_F)
+        r_I = np.maximum(0, self.w_if.T.dot(r_F) + self.inh_input)
         r_E = w_ef.T.dot(r_F) - self.w_ei.T.dot(r_I)
         r_E[r_E < 0] = 0
 
         return r_E, r_I
 
-    def estimate_tuning_curves_at_day(self, day, sigma=None, width_method='circular'):
+    def estimate_tuning_curves_at_day(self, day, sigma=None):
         if sigma is None:
             sigma = self.input_sigma
 
-        tuning_curves = np.zeros((self.N, self.n_test_angles))
-        theta_list = np.linspace(0, 180, self.n_test_angles)
+        tuning_curves_E = np.zeros((self.N, self.n_test_angles))
+        tuning_curves_I = np.zeros((self.N_inh, self.n_test_angles))
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         stim_idx = day * self.n_norm_per_day * self.n_steps_per_norm
         w_ef = self.W[:, :, stim_idx]
         for theta_idx, theta in enumerate(theta_list):
             r_f = self.circular_gaussian(self.N, theta, amp=0.62, sigma=sigma, baseline=0)
-            r_i = self.w_if.T.dot(r_f)
+            r_i = np.maximum(0, self.w_if.T.dot(r_f) + self.inh_input)
             r_e = w_ef.T.dot(r_f) - self.w_ei.T.dot(r_i)
             r_e[r_e < 0] = 0
-            tuning_curves[:, theta_idx] = r_e
-        return tuning_curves
-    
+            tuning_curves_E[:, theta_idx] = r_e
+            tuning_curves_I[:, theta_idx] = r_i
+
+        return tuning_curves_E, tuning_curves_I
+
     def estimate_tuning_curves_over_days(self, sigma=None):
 
         if sigma is None:
             sigma = self.input_sigma
 
-        theta_list = np.linspace(0, 180, self.n_test_angles)
+        theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
         
-        tuning_curves_over_days = []
+        tuning_curves_over_days_E = []
+        tuning_curves_over_days_I = []
 
         for day in tqdm(range(self.n_days), desc='days'):
-            tuning_curves = self.estimate_tuning_curves_at_day(day, sigma=sigma)
-            tuning_curves_over_days.append(tuning_curves)
+            tuning_curves_E, tuning_curves_I = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            tuning_curves_over_days_E.append(tuning_curves_E)
+            tuning_curves_over_days_I.append(tuning_curves_I)
 
-        return np.array(tuning_curves_over_days)
+        return np.array(tuning_curves_over_days_E), np.array(tuning_curves_over_days_I)
 
 
     def plot_weights_complete(self, savefig=False):
@@ -537,7 +606,6 @@ class FeedForward():
 
         if savefig:
             fig.savefig(self.save_location + "weights_complete.svg")
-        fig.close()
 
     def plot_drift_metrics(self, drift_mag, drift_rate, convergence, savefig=False,
                            figsize=(10, 3)):
@@ -545,7 +613,7 @@ class FeedForward():
         fig, axs = plt.subplots(1, 3, figsize=figsize)
 
         drift_mag_mean = np.nanmean(drift_mag, axis=1)
-        drift_mag_std = np.nanstd(drift_mag, axis=1)/np.sqrt(drift_mag.shape[1])
+        drift_mag_std = np.nanstd(drift_mag, axis=1)/np.sqrt(np.sum(~np.isnan(drift_mag), axis=1))
         axs[0].plot(drift_mag_mean, marker='o', ms=4, clip_on=False)
         axs[0].fill_between(range(len(drift_mag_mean)), drift_mag_mean - drift_mag_std, drift_mag_mean + drift_mag_std, alpha=0.2)
         axs[0].set_title("Drift Magnitude")
@@ -554,16 +622,16 @@ class FeedForward():
         axs[0].set_ylim([-1, 5])
 
         drift_rate_mean = np.nanmean(drift_rate, axis=1)
-        drift_rate_std = np.nanstd(drift_rate, axis=1)/np.sqrt(drift_rate.shape[1])
+        drift_rate_std = np.nanstd(drift_rate, axis=1)/np.sqrt(np.sum(~np.isnan(drift_rate), axis=1))
         axs[1].plot(drift_rate_mean, marker='o', ms=4, clip_on=False)
         axs[1].fill_between(range(len(drift_rate_mean)), drift_rate_mean - drift_rate_std, drift_rate_mean + drift_rate_std, alpha=0.2)
         axs[1].set_title("Drift Rate")
         axs[1].set_xlabel("Day")
         axs[1].set_ylabel("Degrees/day")
-        axs[1].set_ylim([-1, 5])
+        axs[1].set_ylim([-1, 2])
 
         convergence_mean = np.nanmean(convergence, axis=1)
-        convergence_std = np.nanstd(convergence, axis=1)/np.sqrt(convergence.shape[1])
+        convergence_std = np.nanstd(convergence, axis=1)/np.sqrt(np.sum(~np.isnan(convergence), axis=1))
         axs[2].plot(convergence_mean, marker='o', ms=4, clip_on=False)
         axs[2].fill_between(range(len(convergence_mean)), convergence_mean - convergence_std, convergence_mean + convergence_std, alpha=0.2)
         axs[2].set_title("Convergence")
@@ -575,47 +643,56 @@ class FeedForward():
         if savefig:
             fig.savefig(self.save_location+"drift_metrics.png", dpi=300)
         fig.show()
-        fig.close()
 
     def plot_drift_metric_distributions(self, drift_mag, drift_rate, convergence, savefig=False, figsize=(10, 3)):
 
         fig, axs = plt.subplots(1, 3, figsize=figsize)
 
-        axs[0].hist(drift_mag[-1, :], bins='fd', alpha=0.7)
+        axs[0].hist(drift_mag[-1, :], bins=30, alpha=0.7)
         axs[0].set_title("Drift Magnitude Distribution")
         axs[0].set_xlabel("Degrees")
         axs[0].set_ylabel("Frequency")
 
-        axs[1].hist(drift_rate[-1, :], bins='fd', alpha=0.7)
+        # verticle line at the median
+        median_drift_mag = np.nanmedian(drift_mag[-1, :])
+        axs[0].axvline(median_drift_mag, color='r', linestyle='dashed', linewidth=1)
+        axs[0].text(median_drift_mag + 0.1, axs[0].get_ylim()[1]*0.9, f'Median: {median_drift_mag:.2f}', color='r')
+
+        axs[1].hist(drift_rate[-1, :], bins=30, alpha=0.7)
         axs[1].set_title("Drift Rate Distribution")
         axs[1].set_xlabel("Degrees/day")
         axs[1].set_ylabel("Frequency")
+        median_drift_rate = np.nanmedian(drift_rate[-1, :])
+        axs[1].axvline(median_drift_rate, color='r', linestyle='dashed', linewidth=1)
+        axs[1].text(median_drift_rate + 0.1, axs[1].get_ylim()[1]*0.9, f'Median: {median_drift_rate:.2f}', color='r')
 
-        axs[2].hist(convergence[-1, :], bins='fd', alpha=0.7)
+        axs[2].hist(convergence[-1, :], bins=30, alpha=0.7)
         axs[2].set_title("Convergence Distribution")
         axs[2].set_xlabel("Degrees")
         axs[2].set_ylabel("Frequency")
+        median_convergence = np.nanmedian(convergence[-1, :])
+        axs[2].axvline(median_convergence, color='r', linestyle='dashed', linewidth=1)
+        axs[2].text(median_convergence + 0.1, axs[2].get_ylim()[1]*0.9, f'Median: {median_convergence:.2f}', color='r')
 
         fig.tight_layout()
         if savefig:
             fig.savefig(self.save_location+"drift_metric_distributions.png", dpi=300)
         fig.show()
-        fig.close()
 
     def plot_initial_vs_final_tuning_curves(self, sigma=None):
 
         if sigma is None:
             sigma = self.input_sigma
 
-        initial_tuning_curves = self.estimate_tuning_curves_at_day(0, sigma=sigma)
-        final_tuning_curves = self.estimate_tuning_curves_at_day(self.n_days-1, sigma=sigma)
+        initial_tuning_curves_E, initial_tuning_curves_I = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+        final_tuning_curves_E, final_tuning_curves_I = self.estimate_tuning_curves_at_day(self.n_days-1, sigma=sigma)
 
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
         for neuron_idx in range(0, self.N, 15): # plot every 30th neuron for visibility
-            axs[0].plot(theta_list, initial_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
-            axs[1].plot(theta_list, final_tuning_curves[neuron_idx, :] + 0.028*neuron_idx, color='black')
+            axs[0].plot(theta_list, initial_tuning_curves_E[neuron_idx, :] + 0.028*neuron_idx, color='black')
+            axs[1].plot(theta_list, final_tuning_curves_E[neuron_idx, :] + 0.028*neuron_idx, color='black')
         axs[0].set_title(f"Initial Tuning Curves")
         axs[1].set_title(f"Final Tuning Curves")
         for ax in axs:
@@ -624,7 +701,6 @@ class FeedForward():
         fig.tight_layout()
         fig.savefig(self.save_location+"initial_vs_final_tuning_curves.png", dpi=300)
         fig.show()
-        fig.close()
 
     def plot_drift_against_tuning(self, drift_mag, tuning_widths, savefig=False):
         
@@ -639,7 +715,6 @@ class FeedForward():
         if savefig:
             fig.savefig(self.save_location+"drift_against_tuning.png", dpi=300)
         fig.show()
-        fig.close()
 
     def plot_POs_initial_vs_final(self):
         initial_POs = self.POs[0]
@@ -654,16 +729,15 @@ class FeedForward():
         fig.tight_layout()
         fig.savefig(self.save_location+"POs_initial_vs_final.png", dpi=300)
         fig.show()
-        fig.close()
 
-    def create_tuning_curves_animation(self, skip_freq=15, sigma=None):
+    def create_tuning_curves_animation(self, skip_freq=20, sigma=None):
 
         import matplotlib.animation as animation
 
         offset = 0.028
         neuron_indices = list(range(0, self.N, skip_freq))
         theta_list = np.linspace(0, 180, self.n_test_angles, endpoint=False)
-        max_ylim = offset * neuron_indices[-1] + 2
+        max_ylim = offset * neuron_indices[-1] + 1
 
         fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
         ax.set_xlim(0, 180)
@@ -678,16 +752,16 @@ class FeedForward():
             for l in lines:
                 l.remove()
             lines.clear()
-            tuning_curves = self.estimate_tuning_curves_at_day(0, sigma=sigma)
+            tuning_curves_E, tuning_curves_I = self.estimate_tuning_curves_at_day(0, sigma=sigma)
             for nrn_idx in neuron_indices:
-                l, = ax.plot(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx, color='black')
+                l, = ax.plot(theta_list, tuning_curves_E[nrn_idx, :] + offset*nrn_idx, color='black')
                 lines.append(l)
             return lines
 
         def animate(day):
-            tuning_curves = self.estimate_tuning_curves_at_day(day, sigma=sigma)
+            tuning_curves_E, tuning_curves_I = self.estimate_tuning_curves_at_day(day, sigma=sigma)
             for l, nrn_idx in zip(lines, neuron_indices):
-                l.set_data(theta_list, tuning_curves[nrn_idx, :] + offset*nrn_idx)
+                l.set_data(theta_list, tuning_curves_E[nrn_idx, :] + offset*nrn_idx)
             ax.set_title(f"Day {day}")
             return lines
 
@@ -703,7 +777,7 @@ class FeedForward():
 
         fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
         ax.set_xlim(0, 180)
-        ax.set_ylim(0, 4)
+        ax.set_ylim(0, np.max(tuning_curve_over_days) + 0.5)
         ax.set_xlabel("Stimulus Angle")
         ax.set_ylabel("Firing Rate")
         fig.suptitle(f"Tuning Curve Evolution of Cell {cell_idx}")
@@ -769,29 +843,36 @@ class FeedForward():
         save_path = self.save_location + f"population_activity_evolution_theta_{theta:.1f}.gif"
         anim.save(save_path, writer='imagemagick')
         
-    def run_analysis(self, saveloc=None, save_results=False):
+    def run_analysis(self, type='baseline', saveloc=None, save_results=False, save_anims=False,
+                     save_weights=False, save_tuning=False, plot_metrics=True):
 
         # work on this
-        POs = self.get_POs_over_trials(self.w_ef_baseline, self.n_steps, type="baseline")
+        POs = self.get_POs_over_trials(self.w_ef_baseline, self.n_steps, type=type)
         drift_mag, drift_rate, convergence = self.get_metrics(self.N, self.n_days, self.theta_stim, POs)
-
-        self.save_location = saveloc
-        os.makedirs(saveloc, exist_ok=True)
-        
-        self.plot_weights_complete(savefig=True)
-        self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
-        self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
         tuning_widths_assigned = self.vars_ef
-        self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
-        self.plot_initial_vs_final_tuning_curves()
-        tuning_curves_over_days = self.estimate_tuning_curves_over_days()
-        self.create_tuning_curves_animation()
-        self.create_single_cell_tuning_curve_animation(tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
-        self.plot_POs_initial_vs_final()
+        self.tuning_curves_over_days_E, self.tuning_curves_over_days_I = self.estimate_tuning_curves_over_days()
+        self.tuning_widths_over_days_E = self.estimate_tuning_widths_over_days()
+        if saveloc is not None:
+            self.save_location = saveloc
+            os.makedirs(saveloc, exist_ok=True)
+
+        if plot_metrics:
+            self.plot_weights_complete(savefig=True)
+            self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
+            self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
+            self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
+            self.plot_initial_vs_final_tuning_curves()
+            self.plot_POs_initial_vs_final()
+
+        if save_anims:
+            self.create_tuning_curves_animation()
+            self.create_single_cell_tuning_curve_animation(self.tuning_curves_over_days_E[:, self.N//2, :], cell_idx=self.N//2)
         # self.create_pop_activity_animation()
 
         if save_results:
-            self.save_results(drift_mag, drift_rate, convergence, save_weights=False)
+            self.save_results(drift_mag, drift_rate, convergence,
+                               self.tuning_curves_over_days_E, self.tuning_curves_over_days_I, save_weights=save_weights,
+                               save_tuning=save_tuning)
 
         plt.close('all')
         
@@ -808,7 +889,8 @@ class FeedForward():
 
         return None
 
-    def save_results(self, drift_mag, drift_rate, convergence, save_weights=False):
+    def save_results(self, drift_mag, drift_rate, convergence,
+                     tuning_curves_over_days_E, tuning_curves_over_days_I, save_weights=False, save_tuning=False):
 
         with h5.File(self.save_location + 'results.hdf5', 'w') as f:
 
@@ -817,6 +899,13 @@ class FeedForward():
                 f.create_dataset("w_ef_baseline", data=self.w_ef_baseline)
                 f.create_dataset("w_if", data=self.w_if)
                 f.create_dataset("w_ei", data=self.w_ei)
+                if self.weight_clipping:
+                    f.create_dataset("w_clip_max", data=self.w_clip_max)
+
+            if save_tuning:
+                f.create_dataset("tuning_curves_over_days", data=tuning_curves_over_days_E, compression="gzip", dtype='float32')
+                f.create_dataset("tuning_curves_over_days_I", data=tuning_curves_over_days_I, compression="gzip", dtype='float32')
+                f.create_dataset("tuning_widths_over_days", data=self.tuning_widths_over_days_E, compression="gzip", dtype='float32')
 
             f.create_dataset("POs", data=self.POs)
             f.create_dataset("vars_ef", data=self.vars_ef)
@@ -829,6 +918,7 @@ class FeedForward():
             "N_inh": self.N_inh,
             "a": self.a,
             "prop_shift": self.prop_shift,
+            "weight_clipping": self.weight_clipping,
             "theta_stim": self.theta_stim,
             "n_test_angles": self.n_test_angles,
             "learning_rate": self.learning_rate,
@@ -845,8 +935,13 @@ class FeedForward():
             "vars_ef_mean": self.vars_ef.mean(),
             "input_sigma": self.input_sigma,
             "norm": self.norm,
-            "seed": self.seed
+            "seed": self.seed,
+            "inh_mod_type": self.inh_mod_type,
+            "activity_dependent_noise": self.activity_dependent_noise,
+            "inh_input_scale": self.inh_input_scale
         }
+        if self.weight_clipping:
+            params["w_clip_max"] = self.w_clip_max
 
         with open(self.save_location + "hyperparameters.json", 'w') as f:
             json.dump(params, f, indent=4)
