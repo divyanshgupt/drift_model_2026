@@ -49,7 +49,7 @@ def generate(seeds, hebb_k, eta_k,
                                 hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days, 
                                 save_location=save_loc_baseline)
         network.run_analysis(save_results=True, save_anims=False,
-                            save_weights=False, save_tuning=True)
+                            save_weights=True, save_tuning=True)
         
         network_cno = BaselineNetwork(inh_type='co-tuned', E_to_E="on", E_to_I="on", I_to_I="on",
                                 plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
@@ -59,7 +59,7 @@ def generate(seeds, hebb_k, eta_k,
                             hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
                             save_location=save_loc_cno)
         network_cno.run_analysis(save_results=True, save_anims=False,
-                                save_weights=False, save_tuning=True)
+                                save_weights=True, save_tuning=True)
 
     Parallel(n_jobs=24, batch_size=1, verbose=10)(
         delayed(run_one)(seed_idx, seed) for seed_idx, seed in enumerate(seeds)
@@ -67,7 +67,7 @@ def generate(seeds, hebb_k, eta_k,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FF - random: run simulations or generate plots")
-    parser.add_argument("--stage", choices=["generate", "plot"], default="plot")
+    parser.add_argument("--stage", choices=["generate", "plot", "complete"], default="plot")
 
     args = parser.parse_args()
 
@@ -83,8 +83,8 @@ if __name__ == "__main__":
 
     n_theta = 500
 
-    hebb_k_list = [1.5, 1.5, 1.5, 1.5, 1.5]
-    eta_k_list = [0.2, 0.5, 0.8, 1.0, 1.5]
+    hebb_k_list = [0.5]
+    eta_k_list = [1.5]
     hebb_eta_zip = zip(hebb_k_list, eta_k_list)
 
 
@@ -94,7 +94,7 @@ if __name__ == "__main__":
             save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
             if weight_clip:
                 save_loc_general += "weight_clipping/"
-            sim_loc = save_loc_general + "hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+            sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             plots_loc = sim_loc + "plots/"
             if not os.path.exists(plots_loc):
                 os.makedirs(plots_loc)
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
             if weight_clip:
                 save_loc_general += "weight_clipping/"
-            sim_loc = save_loc_general + "hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+            sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             plots_loc = sim_loc + "plots/"
             if not os.path.exists(plots_loc):
                 os.makedirs(plots_loc)
@@ -118,7 +118,8 @@ if __name__ == "__main__":
             cno_drift_mag, cno_drift_rate,
             baseline_POs, cno_POs,
             baseline_tuning_over_days, cno_tuning_over_days,
-            baseline_tuning_widths_over_days, cno_tuning_widths_over_days) = load_data(sim_loc, seeds, n_seeds, n_days, N, n_theta,
+            baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+            W_baseline, W_cno) = load_data(sim_loc, seeds, n_seeds, n_days, N, n_theta,
                                                                         filename="results.hdf5")
 
             plot_all(baseline_drift_mag, baseline_drift_rate,
@@ -126,6 +127,39 @@ if __name__ == "__main__":
                     baseline_POs, cno_POs,
                     baseline_tuning_over_days, cno_tuning_over_days,
                     baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+                    W_baseline, W_cno,
                     n_seeds, n_days, N, n_theta,
+                    seeds,
+                    hebb_k, eta_k, plots_loc)
+
+    elif args.stage == "complete":
+    
+        for hebb_k, eta_k in hebb_eta_zip:
+            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
+            if weight_clip:
+                save_loc_general += "weight_clipping/"
+            sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
+            plots_loc = sim_loc + "plots/"
+            if not os.path.exists(plots_loc):
+                os.makedirs(plots_loc)
+
+            generate(seeds, hebb_k, eta_k, n_days, N, weight_clip,
+                      cno_inh_input_scale, baseline_inh_input_scale, sim_loc)
+
+            (baseline_drift_mag, baseline_drift_rate,
+            cno_drift_mag, cno_drift_rate,
+            baseline_POs, cno_POs,
+            baseline_tuning_over_days, cno_tuning_over_days,
+            baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+            W_baseline, W_cno) = load_data(sim_loc, seeds, n_seeds, n_days, N, n_theta,
+                                                                        filename="results.hdf5")
+
+            plot_all(baseline_drift_mag, baseline_drift_rate,
+                    cno_drift_mag, cno_drift_rate,
+                    baseline_POs, cno_POs,
+                    baseline_tuning_over_days, cno_tuning_over_days,
+                    baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+                    W_baseline, W_cno,
+                    n_seeds, n_days+1, N, n_theta,
                     seeds,
                     hebb_k, eta_k, plots_loc)

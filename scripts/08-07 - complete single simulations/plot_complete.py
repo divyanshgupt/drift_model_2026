@@ -59,6 +59,10 @@ def load_data(sim_loc, seeds, n_seeds, n_days, N, n_theta,
             try:
                 W_baseline.append(f["W"][:])
             except:
+                try:
+                    W_baseline.append(f["W_ef"][:])
+                except:
+                    pass
                 pass
 
         with h5py.File(save_loc_cno + filename, "r") as f:
@@ -70,6 +74,10 @@ def load_data(sim_loc, seeds, n_seeds, n_days, N, n_theta,
             try:
                 W_cno.append(f["W"][:])
             except:
+                try:
+                    W_cno.append(f["W_ef"][:])
+                except:
+                    pass
                 pass
 
     return (np.array(baseline_drift_mag), np.array(baseline_drift_rate), 
@@ -151,9 +159,9 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
     final_tuning_widths = baseline_tuning_widths_over_days[:, -1, :].flatten()
 
     axs[0].hist(initial_tuning_widths, bins=30, color=baseline_color, alpha=0.7)
-    axs[0].axvline(np.mean(initial_tuning_widths), color=baseline_color, linestyle='--', label='mean = {:.2f} °'.format(np.mean(initial_tuning_widths)))
+    axs[0].axvline(np.nanmean(initial_tuning_widths), color=baseline_color, linestyle='--', label='mean = {:.2f} °'.format(np.nanmean(initial_tuning_widths)))
     axs[1].hist(final_tuning_widths, bins=30, color=baseline_color, alpha=0.7)
-    axs[1].axvline(np.mean(final_tuning_widths), color=baseline_color, linestyle='--', label='mean = {:.2f} °'.format(np.mean(final_tuning_widths)))
+    axs[1].axvline(np.nanmean(final_tuning_widths), color=baseline_color, linestyle='--', label='mean = {:.2f} °'.format(np.nanmean(final_tuning_widths)))
     axs[0].set_xlabel("Tuning Width (°)")
     axs[0].set_ylabel("Count")
     axs[0].set_title("Initial")
@@ -175,12 +183,12 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
     fig, axs = plt.subplots(1, 1, figsize=(4.5, 4), dpi=300)
     final_tuning_widths_baseline = baseline_tuning_widths_over_days[:, -1, :].flatten()
     final_tuning_widths_cno = cno_tuning_widths_over_days[:, -1, :].flatten()
-    axs.hist(final_tuning_widths, bins=30, color=baseline_color, alpha=0.7)
+    axs.hist(final_tuning_widths_baseline, bins=30, color=baseline_color, alpha=0.7)
     axs.hist(final_tuning_widths_cno, bins=30, color=cno_color, alpha=0.7)
     axs.set_xlabel("Final Tuning Width (°)")
     axs.set_ylabel("Count")
-    axs.axvline(np.mean(final_tuning_widths_baseline), color=baseline_color, linestyle='--', label='baseline mean = {:.2f} °'.format(np.mean(final_tuning_widths_baseline)))
-    axs.axvline(np.mean(final_tuning_widths_cno), color=cno_color, linestyle='--', label='cno mean = {:.2f} °'.format(np.mean(final_tuning_widths_cno)))
+    axs.axvline(np.nanmean(final_tuning_widths_baseline), color=baseline_color, linestyle='--', label='baseline mean = {:.2f} °'.format(np.nanmean(final_tuning_widths_baseline)))
+    axs.axvline(np.nanmean(final_tuning_widths_cno), color=cno_color, linestyle='--', label='cno mean = {:.2f} °'.format(np.nanmean(final_tuning_widths_cno)))
     axs.legend(frameon=False)
     axs.set_yscale('log')
     fig.suptitle(rf"$K_{{hebb}}$ = {hebb_k}, $K_{{eta}}$ = {eta_k}")
@@ -273,9 +281,15 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
 
     axs[0].axvline(np.nanmean(final_baseline_drift_mag), color=baseline_color, linestyle='--', label='baseline mean = {:.2f} °'.format(np.nanmean(final_baseline_drift_mag)))
     axs[0].axvline(np.nanmean(final_cno_drift_mag), color=cno_color, linestyle='--', label='cno mean = {:.2f} °'.format(np.nanmean(final_cno_drift_mag)))
+
+    axs[0].axvline(np.nanmedian(final_baseline_drift_mag), color=baseline_color, linestyle=':', label='baseline median = {:.2f} °'.format(np.nanmedian(final_baseline_drift_mag)))
+    axs[0].axvline(np.nanmedian(final_cno_drift_mag), color=cno_color, linestyle=':', label='cno median = {:.2f} °'.format(np.nanmedian(final_cno_drift_mag)))
+
+
     axs[1].axvline(np.nanmean(final_baseline_drift_rate), color=baseline_color, linestyle='--', label='baseline mean = {:.2f} °/day'.format(np.nanmean(final_baseline_drift_rate)))
     axs[1].axvline(np.nanmean(final_cno_drift_rate), color=cno_color, linestyle='--', label='cno mean = {:.2f} °/day'.format(np.nanmean(final_cno_drift_rate)))
-
+    axs[1].axvline(np.nanmedian(final_baseline_drift_rate), color=baseline_color, linestyle=':', label='baseline median = {:.2f} °/day'.format(np.nanmedian(final_baseline_drift_rate)))
+    axs[1].axvline(np.nanmedian(final_cno_drift_rate), color=cno_color, linestyle=':', label='cno median = {:.2f} °/day'.format(np.nanmedian(final_cno_drift_rate)))
 
     axs[0].legend(frameon=False) 
     axs[1].legend(frameon=False)
@@ -451,7 +465,7 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
 
     # if w_baseline and w_cno are not empty, plot the weight matrices
     if W_baseline.size > 0 and W_cno.size > 0:
-
+        print("Plotting weight matrices for baseline vs CNO...")
         # 1. weights over time for single post neuron
         seed_idx = 0
         cell_idx = int(N/2)  # example post neuron index
@@ -488,3 +502,27 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
         fig.savefig(plots_loc + "weight_matrix_row_post_neuron_{}_seed_{}.svg".format(cell_idx, seed_idx))
         
 
+    # Plot the fanning out of POs in time
+    print("Plotting POs over time...")
+    fig, axs = plt.subplots(1, 2, figsize=(8, 3), dpi=300)
+
+    seed_range = [0]
+    time_array = np.arange(n_days)
+    for seed_idx in seed_range:
+        for cell_idx in range(N):
+            axs[0].plot(time_array, baseline_POs[seed_idx, :, cell_idx] - baseline_POs[seed_idx, 0, cell_idx], color=baseline_color, alpha=0.1)
+            axs[1].plot(time_array, cno_POs[seed_idx, :, cell_idx] - cno_POs[seed_idx, 0, cell_idx], color=cno_color, alpha=0.1)
+
+    axs[0].set_title("Baseline POs")
+
+    axs[0].set_xlabel("Days")
+    axs[0].set_ylabel(r"$\Delta$ POs (°)")
+    axs[1].set_xlabel("Days")
+    axs[1].set_ylabel(r"$\Delta$ POs (°)")
+    axs[0].set_ylim(-40, 40)
+    axs[1].set_ylim(-40, 40)
+    axs[0].set_title("Baseline POs")
+    axs[1].set_title("CNO POs")
+    fig.suptitle(rf"$K_{{hebb}}$ = {hebb_k}, $K_{{eta}}$ = {eta_k}")
+    fig.tight_layout()
+    fig.savefig(plots_loc + "fanning_out_POs.svg")

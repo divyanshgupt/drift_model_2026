@@ -21,7 +21,7 @@ plt.rcParams['font.size'] = 12
 
 def generate(seeds, hebb_k, eta_k, 
              n_days, N, weight_clip, cno_inh_input_scale, baseline_inh_input_scale,
-             save_loc_sim):
+             PO_method, save_loc_sim):
 
     def run_one(seed_idx, seed):
 
@@ -39,7 +39,7 @@ def generate(seeds, hebb_k, eta_k,
         network = FeedForward(inh='on', inh_type='blanket',
                             inh_mod_type="hyperpolarizing", inh_input_scale=baseline_inh_input_scale,
                             weight_clipping=weight_clip, hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
-                            seed=int(seed))
+                            seed=int(seed), PO_method=PO_method)
         network.run_analysis(saveloc=save_loc_baseline, 
                             save_results=True, save_anims=False, 
                             save_weights=True, save_tuning=True)
@@ -47,18 +47,18 @@ def generate(seeds, hebb_k, eta_k,
         network_cno = FeedForward(inh='on', inh_type='blanket',
                                 inh_mod_type="hyperpolarizing", inh_input_scale=cno_inh_input_scale,
                             weight_clipping=weight_clip, hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
-                            seed=int(seed))
+                            seed=int(seed), PO_method=PO_method)
         network_cno.run_analysis(saveloc=save_loc_cno,
                             save_results=True, save_anims=False, 
                             save_weights=True, save_tuning=True)
 
-    Parallel(n_jobs=24, batch_size=1, verbose=10)(
+    Parallel(n_jobs=12, batch_size=1, verbose=10)(
         delayed(run_one)(seed_idx, seed) for seed_idx, seed in enumerate(seeds)
     )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FF - random: run simulations or generate plots")
-    parser.add_argument("--stage", choices=["generate", "plot"], default="plot")
+    parser.add_argument("--stage", choices=["generate", "plot", "complete"], default="plot")
 
     args = parser.parse_args()
 
@@ -72,10 +72,11 @@ if __name__ == "__main__":
     cno_inh_input_scale = 1
     baseline_inh_input_scale = 0
 
+    PO_method = 'argmax' # 'argmax' or 'circular_mean'
     n_theta = 100
 
-    hebb_k_list = [1.5, 1.5, 1.5, 1.5, 1.5]
-    eta_k_list = [0.2, 0.5, 0.8, 1.0, 1.5]
+    hebb_k_list = [1.5]
+    eta_k_list = [1.5]
 
     hebb_eta_zip = zip(hebb_k_list, eta_k_list)
 
@@ -86,23 +87,24 @@ if __name__ == "__main__":
 
         for hebb_k, eta_k in hebb_eta_zip:
             save_loc_general = "../../results/08-07 - complete single simulations/1B - FF - random - inh_mod/"
-            save_loc_sim = save_loc_general + "hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+            save_loc_sim = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             if weight_clip:
-                save_loc_sim = save_loc_general + "weight_clipping/hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+                save_loc_sim = save_loc_general + "weight_clipping/hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             plots_loc = save_loc_sim + "plots/"
             if not os.path.exists(plots_loc):
                 os.makedirs(plots_loc)
 
             generate(seeds, hebb_k, eta_k, n_days, N,
-                    weight_clip, cno_inh_input_scale, baseline_inh_input_scale, save_loc_sim)
+                    weight_clip, cno_inh_input_scale, baseline_inh_input_scale,
+                     PO_method, save_loc_sim)
 
     elif args.stage == "plot":
 
         for hebb_k, eta_k in hebb_eta_zip:
             save_loc_general = "../../results/08-07 - complete single simulations/1B - FF - random - inh_mod/"
-            save_loc_sim = save_loc_general + "hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+            save_loc_sim = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             if weight_clip:
-                save_loc_sim = save_loc_general + "weight_clipping/hebb_{:.1f}_eta_{:.1f}/".format(hebb_k, eta_k)
+                save_loc_sim = save_loc_general + "weight_clipping/hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
             plots_loc = save_loc_sim + "plots/"
             if not os.path.exists(plots_loc):
                 os.makedirs(plots_loc)
@@ -125,8 +127,37 @@ if __name__ == "__main__":
                     hebb_k, eta_k, plots_loc)
 
 
+    elif args.stage == "complete":
+        for hebb_k, eta_k in hebb_eta_zip:
+            save_loc_general = "../../results/08-07 - complete single simulations/1B - FF - random - inh_mod/"
+            save_loc_sim = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
+            if weight_clip:
+                save_loc_sim = save_loc_general + "weight_clipping/hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
+            plots_loc = save_loc_sim + "plots/"
+            if not os.path.exists(plots_loc):
+                os.makedirs(plots_loc)
+
+            generate(seeds, hebb_k, eta_k, n_days, N,
+                    weight_clip, cno_inh_input_scale, baseline_inh_input_scale,
+                     PO_method, save_loc_sim)
+
+            (baseline_drift_mag, baseline_drift_rate,
+            cno_drift_mag, cno_drift_rate,
+            baseline_POs, cno_POs,
+            baseline_tuning_over_days, cno_tuning_over_days,
+            baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+            W_baseline, W_cno) = load_data(save_loc_sim, seeds, n_seeds, n_days, N, n_theta)
 
 
+            plot_all(baseline_drift_mag, baseline_drift_rate,
+                    cno_drift_mag, cno_drift_rate,
+                    baseline_POs, cno_POs,
+                    baseline_tuning_over_days, cno_tuning_over_days,
+                    baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+                    W_baseline, W_cno,
+                    n_seeds, n_days, N, n_theta,
+                    seeds,
+                    hebb_k, eta_k, plots_loc)
 
 
         
