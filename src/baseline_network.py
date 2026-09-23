@@ -7,6 +7,7 @@ from helper_functions import circular_gaussian
 import scipy.stats as stats
 import h5py as h5
 import json
+
 """
 Setup an all to all recurrent network with:
 F -> E
@@ -36,6 +37,7 @@ class BaselineNetwork():
                   inh_time_varying="off", inh_mod_start=7, inh_mod_end=14, inh_mod_scale=0.5,
                   inh_mod_type="weight_mod", # hyperpolarizing or weight_mod
                   inh_input_scale = 1,
+                  weight_clipping = False,
                   norm=True, set_seed=True, seed=42, inh_scale=1, E_to_I_scale=1,
                   hebb_scaling=0.3, rand_scaling=1.0, n_days=28,
                   if_pre_run=True, n_pre_run_stimuli=300,
@@ -56,6 +58,8 @@ class BaselineNetwork():
         self.plasticity_I_to_E = plasticity_I_to_E
         self.plasticity_I_to_I = plasticity_I_to_I
         self.plasticity_F_to_I = plasticity_F_to_I
+
+        self.weight_clipping = weight_clipping
 
         self.activity_dependent_noise = activity_dependent_noise
         self.inh_mod_type = inh_mod_type
@@ -174,6 +178,7 @@ class BaselineNetwork():
         elif self.inh_type == "random":
             self.w_ei = self.random_weights(self.N_inh, self.N)
         # self.w_ei *= self.inh_scale
+        self.w_max = 1.5 * np.percentile(self.w_ef, 99)  # maximum weight for clipping
 
         # recurrent weights (if present)
         if self.E_to_E == "on":
@@ -345,7 +350,7 @@ class BaselineNetwork():
                     self.w_if = self.normalisation(self.w_if)
 
             # estimate preferred orientations at end of each day
-            if stim_idx % self.n_stim_per_day == 0:
+            if (stim_idx + 1) % self.n_stim_per_day == 0:
                 PO = self.get_preferred_orientations(inh_mod_scale=inh_mod_scale)
                 self.POs.append(PO)
 
@@ -411,6 +416,9 @@ class BaselineNetwork():
         else:
             rand = 0
         w_new = w_old + (hebb + rand) * self.learning_rate
+
+        if self.weight_clipping:
+            w_new = np.clip(w_new, 0, self.w_max)  # clip weights to be non-negative and below a maximum value
 
         # set diagonal to 0 for recurrent weights
         if if_recurrent:
@@ -620,6 +628,7 @@ class BaselineNetwork():
         ])
 
         self.tuning_curves_over_days = np.zeros((self.n_days, self.N, self.n_test_angles))
+        self.tuning_curves_over_days_I = np.zeros((self.n_days, self.N_inh, self.n_test_angles))
         self.tuning_widths_over_days = np.zeros((self.n_days, self.N))
 
         for day in tqdm(range(self.n_days), desc="days"):
@@ -634,10 +643,11 @@ class BaselineNetwork():
             w_ie = self.W_ie[:, :, stim_idx].copy()
             w_ii = self.W_ii[:, :, stim_idx].copy()
 
-            r_E_batch, _ = self._settle_batch(
+            r_E_batch, r_I_batch = self._settle_batch(
                 r_F_batch, w_ef, w_ee, w_ei, w_if, w_ie, w_ii, inh_scale
             )
             self.tuning_curves_over_days[day] = r_E_batch.T  # (N, n_angles)
+            self.tuning_curves_over_days_I[day] = r_I_batch.T  # (N_inh, n_angles)
 
             for neuron_idx in range(self.N):
                 if width_method == 'circular':
@@ -649,7 +659,7 @@ class BaselineNetwork():
                         theta_list, self.tuning_curves_over_days[day, neuron_idx, :]
                     )
 
-        return self.tuning_curves_over_days, self.tuning_widths_over_days
+        return self.tuning_curves_over_days, self.tuning_curves_over_days_I, self.tuning_widths_over_days
 
     def standard_FWHM(self, x, y):
         half_max = np.max(y) / 2
@@ -724,7 +734,7 @@ class BaselineNetwork():
 
         panels = [
             (axs[0, 0], self.w_ef.T, "F to E weights"),
-            (axs[0, 1], self.w_ee.T, "E to E weights"),
+            (axs[0, 1], self.W_ee[0].T, "E to E weights"),
             (axs[0, 2], self.w_ei.T, "I to E weights"),
             (axs[1, 0], self.w_if.T, "F to I weights"),
             (axs[1, 1], self.w_ie.T, "E to I weights"),
@@ -771,31 +781,31 @@ class BaselineNetwork():
         fig, axs = plt.subplots(1, 3, figsize=figsize)
 
         drift_mag_mean = np.nanmean(drift_mag, axis=1)
-        drift_mag_std = np.nanstd(drift_mag, axis=1)/np.sqrt(drift_mag.shape[1])
+        drift_mag_std = np.nanstd(drift_mag, axis=1)/np.sqrt(np.sum(~np.isnan(drift_mag), axis=1))
         axs[0].plot(drift_mag_mean, marker='o', ms=4, clip_on=False)
         axs[0].fill_between(range(len(drift_mag_mean)), drift_mag_mean - drift_mag_std, drift_mag_mean + drift_mag_std, alpha=0.2)
         axs[0].set_title("Drift Magnitude")
         axs[0].set_xlabel("Day")
         axs[0].set_ylabel("Degrees")
-        axs[0].set_ylim([-1, 5])
+        axs[0].set_ylim(np.nanmin(drift_mag_mean) - 0.5, np.nanmax(drift_mag_mean) + 1)
 
         drift_rate_mean = np.nanmean(drift_rate, axis=1)
-        drift_rate_std = np.nanstd(drift_rate, axis=1)/np.sqrt(drift_rate.shape[1])
+        drift_rate_std = np.nanstd(drift_rate, axis=1)/np.sqrt(np.sum(~np.isnan(drift_rate), axis=1))
         axs[1].plot(drift_rate_mean, marker='o', ms=4, clip_on=False)
         axs[1].fill_between(range(len(drift_rate_mean)), drift_rate_mean - drift_rate_std, drift_rate_mean + drift_rate_std, alpha=0.2)
         axs[1].set_title("Drift Rate")
         axs[1].set_xlabel("Day")
         axs[1].set_ylabel("Degrees/day")
-        axs[1].set_ylim([-1, 5])
+        axs[1].set_ylim(np.nanmin(drift_rate_mean) - 0.5, np.nanmax(drift_rate_mean) + 1)
 
         convergence_mean = np.nanmean(convergence, axis=1)
-        convergence_std = np.nanstd(convergence, axis=1)/np.sqrt(convergence.shape[1])
+        convergence_std = np.nanstd(convergence, axis=1)/np.sqrt(np.sum(~np.isnan(convergence), axis=1))
         axs[2].plot(convergence_mean, marker='o', ms=4, clip_on=False)
         axs[2].fill_between(range(len(convergence_mean)), convergence_mean - convergence_std, convergence_mean + convergence_std, alpha=0.2)
         axs[2].set_title("Convergence")
         axs[2].set_xlabel("Day")
         axs[2].set_ylabel("Degrees")
-        axs[2].set_ylim([-1, 5])
+        axs[2].set_ylim([np.nanmin(convergence_mean) - 0.5, np.nanmax(convergence_mean) + 1])
 
         fig.tight_layout()
         if savefig:
@@ -807,17 +817,17 @@ class BaselineNetwork():
 
         fig, axs = plt.subplots(1, 3, figsize=figsize)
 
-        axs[0].hist(drift_mag[-1, :], bins='fd', alpha=0.7)
+        axs[0].hist(drift_mag[-1, :], bins=30, alpha=0.7)
         axs[0].set_title("Drift Magnitude Distribution")
         axs[0].set_xlabel("Degrees")
         axs[0].set_ylabel("Frequency")
 
-        axs[1].hist(drift_rate[-1, :], bins='fd', alpha=0.7)
+        axs[1].hist(drift_rate[-1, :], bins=30, alpha=0.7)
         axs[1].set_title("Drift Rate Distribution")
         axs[1].set_xlabel("Degrees/day")
         axs[1].set_ylabel("Frequency")
 
-        axs[2].hist(convergence[-1, :], bins='fd', alpha=0.7)
+        axs[2].hist(convergence[-1, :], bins=30, alpha=0.7)
         axs[2].set_title("Convergence Distribution")
         axs[2].set_xlabel("Degrees")
         axs[2].set_ylabel("Frequency")
@@ -1033,22 +1043,26 @@ class BaselineNetwork():
         save_path = self.save_location + f"population_activity_evolution_theta_{theta:.1f}.gif"
         anim.save(save_path, writer='imagemagick')
 
-    def save_results(self, drift_mag, drift_rate, convergence, save_weights=False):
+    def save_results(self, drift_mag, drift_rate, convergence, 
+                     save_weights=False, save_tuning=False):
 
-        with h5.File(self.save_location + "results.h5", "w") as f:
+        with h5.File(self.save_location + "results.hdf5", "w") as f:
 
             if save_weights:
                 f.create_dataset("W_ef", data=self.W_ef)
-                f.create_dataset("W_ee", data=self.W_ee)
-                f.create_dataset("W_ei", data=self.W_ei)
-                f.create_dataset("W_if", data=self.W_if)
-                f.create_dataset("W_ie", data=self.W_ie)
-                f.create_dataset("W_ii", data=self.W_ii)
+                # f.create_dataset("W_ee", data=self.W_ee)
+                # f.create_dataset("W_ei", data=self.W_ei)
+                # f.create_dataset("W_if", data=self.W_if)
+                # f.create_dataset("W_ie", data=self.W_ie)
+                # f.create_dataset("W_ii", data=self.W_ii)
 
             f.create_dataset("POs", data=self.POs)
             f.create_dataset("vars_ef", data=self.vars_ef)
-            f.create_dataset("tuning_widths_over_days", data=self.tuning_widths_over_days)
-            f.create_dataset("tuning_curves_over_days", data=self.tuning_curves_over_days)
+
+            if save_tuning:
+                f.create_dataset("tuning_widths_over_days", data=self.tuning_widths_over_days)
+                f.create_dataset("tuning_curves_over_days", data=self.tuning_curves_over_days)
+                f.create_dataset("tuning_curves_over_days_I", data=self.tuning_curves_over_days_I)
 
             f.create_dataset("drift_mag", data=drift_mag)
             f.create_dataset("drift_rate", data=drift_rate)
@@ -1068,6 +1082,7 @@ class BaselineNetwork():
             "plasticity_I_to_E": self.plasticity_I_to_E,
             "plasticity_I_to_I": self.plasticity_I_to_I,
             "plasticity_F_to_I": self.plasticity_F_to_I,
+            "weight_clipping": self.weight_clipping,
             "inh_time_varying": self.inh_time_varying,
             "inh_mod_start": self.inh_mod_start,
             "inh_mod_end": self.inh_mod_end,
@@ -1098,6 +1113,9 @@ class BaselineNetwork():
             "seed": self.seed
         }
 
+        if self.weight_clipping:
+            params["w_max"] = self.w_max
+            
         if self.I_to_I == "on":
             params["vars_ii_mean"] = self.vars_ii_mean
 
@@ -1106,36 +1124,45 @@ class BaselineNetwork():
         
         pass
     
-    def run_analysis(self, save_results=True):
+    def run_analysis(self, save_results=True, save_anims=False,
+                     save_weights=False, save_tuning=False, plot_metrics=True):
 
-        self.plot_initial_weights(savefig=True)
+
         self.run()
-        self.plot_weights(savefig=True)
         drift_mag, drift_rate, convergence = self.get_drift_metrics()
-        self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
-        self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
-        # estimate tuning widths at initial day
-        # tuning_curves_initial = self.estimate_tuning_curves_at_day(0)
+
         tuning_widths_assigned = self.vars_ef.copy() # assigned tuning widths based on feedforward weights
 
-        self.tuning_curves_over_days, self.tuning_widths_over_days = self.estimate_tuning_curves_over_days(sigma=self.train_sigma)
+        self.tuning_curves_over_days, self.tuning_curves_over_days_I, self.tuning_widths_over_days = self.estimate_tuning_curves_over_days(sigma=self.train_sigma)
 
-        self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
-
-        self.plot_initial_vs_final_tuning_curves(sigma=self.train_sigma)
-        self.plot_initial_vs_final_tuning_width_distributions(sigma=self.train_sigma)
-        self.create_tuning_curve_animation(sigma=self.train_sigma)
-
-        self.create_single_cell_tuning_curve_animation(self.tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
-        self.create_pop_activity_animation(theta=90)
         if save_results:
-            self.save_results(drift_mag, drift_rate, convergence)
+            self.save_results(drift_mag, drift_rate, convergence, 
+                              save_weights=save_weights, save_tuning=save_tuning)
+
+        if plot_metrics:
+            self.plot_initial_weights(savefig=True)
+            self.plot_weights(savefig=True)
+            self.plot_drift_metrics(drift_mag, drift_rate, convergence, savefig=True)
+            self.plot_drift_metric_distributions(drift_mag, drift_rate, convergence, savefig=True)
+            # estimate tuning widths at initial day
+            # tuning_curves_initial = self.estimate_tuning_curves_at_day(0)
+
+            self.plot_drift_against_tuning(drift_mag[-1], tuning_widths_assigned, savefig=True)
+
+            self.plot_initial_vs_final_tuning_curves(sigma=self.train_sigma)
+            self.plot_initial_vs_final_tuning_width_distributions(sigma=self.train_sigma)
+
+        if save_anims:
+            self.create_tuning_curve_animation(sigma=self.train_sigma)
+            self.create_single_cell_tuning_curve_animation(self.tuning_curves_over_days[:, self.N//2, :], cell_idx=self.N//2)
+            self.create_pop_activity_animation(theta=90)
+
 
         return None
     
 def load_data(save_location):
 
-    with h5.File(save_location + "results.h5", "r") as f:
+    with h5.File(save_location + "results.hdf5", "r") as f:
         W_ef = f["W_ef"][:]
         W_ee = f["W_ee"][:]
         W_ei = f["W_ei"][:]

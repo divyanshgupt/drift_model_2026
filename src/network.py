@@ -26,7 +26,7 @@ class FeedForward():
                  inh_mod_type = "weight_mod",
                  inh_input_scale = 1,
                  weight_clipping = False,
-                 PO_method='circular_mean',
+                 PO_method='argmax', # 'argmax' or 'circular_mean'
                  norm = True, pre_run=True, seed = 100, set_seed=True):
 
         self.set_seed = set_seed
@@ -135,7 +135,9 @@ class FeedForward():
         if self.weight_clipping:
             # self.w_clip_max = np.max(w_ef) * 1.5
             # derive a clip from the 99 percentile of the vars_ef lognormal distribution
-            self.w_clip_max = np.percentile(w_ef.flatten(), 99) * 1.5
+            self.w_clip_max = np.percentile(w_ef.flatten(), 99) * 1.5 # ~ 0.0374
+            # self.w_clip_max = 4 * np.median(w_ef.max(axis=0))   # ≈ 0.076, vs 0.0374 now
+
             print(f"weight clipping enabled, max weight set to: {self.w_clip_max}")
         return w_ef
 
@@ -251,7 +253,7 @@ class FeedForward():
         """
         
         """
-        angles = np.linspace(0, 180, n_angles)
+        angles = np.linspace(0, 180, n_angles, endpoint=False)
         activity = np.zeros((N, n_angles))
         for angle_idx, angle in enumerate(angles):
             y = self.circular_gaussian(N, angle, amp=0.62, sigma=self.input_sigma, baseline=0)
@@ -938,7 +940,8 @@ class FeedForward():
             "seed": self.seed,
             "inh_mod_type": self.inh_mod_type,
             "activity_dependent_noise": self.activity_dependent_noise,
-            "inh_input_scale": self.inh_input_scale
+            "inh_input_scale": self.inh_input_scale,
+            "PO_method": self.PO_method,
         }
         if self.weight_clipping:
             params["w_clip_max"] = self.w_clip_max
