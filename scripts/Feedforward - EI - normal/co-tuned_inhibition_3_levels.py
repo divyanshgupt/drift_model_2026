@@ -38,9 +38,9 @@ drift_mag_inh_3, drift_rate_inh_3, convergence_inh_3 = network_inh_3.get_metrics
 eo = 2
 
 fig, axs = plt.subplots(1, 2, figsize=(6, 2), dpi=400)
-axs[0].plot(np.arange(1, network_inh_1.n_days)[::eo], np.median(drift_mag_inh_1, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_1_scale}', clip_on=False)
-axs[0].plot(np.arange(1, network_inh_2.n_days)[::eo], np.median(drift_mag_inh_2, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_2_scale}', clip_on=False)
-axs[0].plot(np.arange(1, network_inh_3.n_days)[::eo], np.median(drift_mag_inh_3, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_3_scale}', clip_on=False)
+axs[0].plot(np.arange(1, network_inh_1.n_days)[::eo], np.nanmedian(drift_mag_inh_1, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_1_scale}', clip_on=False)
+axs[0].plot(np.arange(1, network_inh_2.n_days)[::eo], np.nanmedian(drift_mag_inh_2, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_2_scale}', clip_on=False)
+axs[0].plot(np.arange(1, network_inh_3.n_days)[::eo], np.nanmedian(drift_mag_inh_3, axis=1)[:-1][::eo], ls='-', marker='o', ms=4, label=f'I = {inh_3_scale}', clip_on=False)
 
 axs[0].set_ylim([0, 5]); axs[0].set_yticks([0, 5])
 axs[0].set_xlabel('time since start [days]')
@@ -49,9 +49,9 @@ axs[0].set_xlim(0, 30)
 axs[0].legend(frameon=False, fontsize=8)
 
 
-axs[1].plot(np.mean(drift_rate_inh_1, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_1_scale}', clip_on=False)
-axs[1].plot(np.mean(drift_rate_inh_2, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_2_scale}', clip_on=False)
-axs[1].plot(np.mean(drift_rate_inh_3, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_3_scale}', clip_on=False)
+axs[1].plot(np.nanmean(drift_rate_inh_1, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_1_scale}', clip_on=False)
+axs[1].plot(np.nanmean(drift_rate_inh_2, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_2_scale}', clip_on=False)
+axs[1].plot(np.nanmean(drift_rate_inh_3, axis=1)[:-1], ls='-', marker='o', ms=4, label=f'I = {inh_3_scale}', clip_on=False)
 
 axs[1].set_ylim([0, 5]); axs[1].set_yticks([0, 5])
 axs[1].set_xlabel('time since start [days]')

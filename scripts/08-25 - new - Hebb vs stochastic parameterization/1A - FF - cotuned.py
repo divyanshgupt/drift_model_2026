@@ -26,7 +26,7 @@ plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 
 def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clipping,
-             baseline_inh_input_scale, cno_inh_input_scale,
+             baseline_inh_input_scale, cno_inh_input_scale, PO_method,
              save_loc_general):
     
     tasks = [(seed_idx, seed, hebb_k, eta_k, cond)
@@ -36,19 +36,19 @@ def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clipping,
              for cond in ["baseline", "cno"]]
 
     def run_one(seed_idx, seed, hebb_k, eta_k, cond):
-        sim_dir = save_loc_general + f"data/seed_{seed}/hebb_{hebb_k:.1f}_eta_{eta_k:.1f}/{cond}/"
+        sim_dir = save_loc_general + f"data/seed_{seed}/hebb_{hebb_k:.2f}_eta_{eta_k:.2f}/{cond}/"
         if os.path.exists(sim_dir + "results.hdf5"):
             return  # Skip if results already exist
         os.makedirs(sim_dir, exist_ok=True)
         net = FeedForward(inh="on", inh_type="co-tuned",
                           inh_mod_type="hyperpolarizing", inh_input_scale=baseline_inh_input_scale if cond == "baseline" else cno_inh_input_scale,
                           weight_clipping=weight_clipping, hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days, N=N,
-                          seed=int(seed))
+                          seed=int(seed), PO_method=PO_method)
         net.run_analysis(saveloc=sim_dir, save_results=True, 
                          save_anims=False, save_weights=False,
                          save_tuning=False)
 
-    Parallel(n_jobs=12, batch_size=1, verbose=10)(
+    Parallel(n_jobs=20, batch_size=1, verbose=10)(
         delayed(run_one)(*t) for t in tasks
     )
 
@@ -62,13 +62,14 @@ if __name__ == "__main__":
     hebb_k_range = np.linspace(0, 1, 20)
     eta_k_range = np.linspace(0, 1, 20)
     seeds = np.arange(1, 10)
-    n_days = 100
+    n_days = 50
     weight_clipping = False
     N = 500
     baseline_inh_input_scale = 0
     cno_inh_input_scale = 1.0
+    PO_method = 'argmax' # 'argmax' or 'circular_mean'
 
-    save_loc_general = "../../results/08-25 - new - Hebb vs stochastic parameterization/1A - FF - cotuned/range=(0, 1, 20)/"
+    save_loc_general = "../../results/08-25 - new - Hebb vs stochastic parameterization/1A - FF - cotuned/range=(0, 1, 20) - new - argmax/"
 
     if weight_clipping:
         save_loc_general += "weight_clipping/"
@@ -79,7 +80,7 @@ if __name__ == "__main__":
 
     if args.stage == "generate":
         generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clipping,
-                 baseline_inh_input_scale, cno_inh_input_scale,
+                 baseline_inh_input_scale, cno_inh_input_scale, PO_method,
                  save_loc_general)
 
     elif args.stage == "plot":

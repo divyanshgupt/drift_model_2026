@@ -240,7 +240,11 @@ class FeedbackInhibition(FeedForward):
                 r_I = self.transfer_I(u_I)
 
             activity[:, theta_idx] = r_E
-        PO_estimate = theta_list[np.argmax(activity, axis=1)]
+        # silent cells (fully rectified tuning curve) have no preference; argmax
+        # would report angle 0 for them
+        PO_estimate = np.where(activity.max(axis=1) > 0,
+                               theta_list[np.argmax(activity, axis=1)],
+                               np.nan)
         return PO_estimate
         
 

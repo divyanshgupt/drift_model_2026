@@ -36,7 +36,7 @@ def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
              for cond in ["baseline", "cno"]]
 
     def run_one(seed_idx, seed, hebb_k, eta_k, cond):
-        sim_dir = save_loc_general + f"data/seed_{seed}/hebb_{hebb_k:.1f}_eta_{eta_k:.1f}/{cond}/"
+        sim_dir = save_loc_general + f"data/seed_{seed}/hebb_{hebb_k:.2f}_eta_{eta_k:.2f}/{cond}/"
         if os.path.exists(sim_dir + "results.hdf5"):
             return  # Skip if results already exist
         os.makedirs(sim_dir, exist_ok=True)

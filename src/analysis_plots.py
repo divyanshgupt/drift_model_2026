@@ -80,12 +80,15 @@ def plot_drift_vs_vars_ef_comparison(drift_mag_list, var_ef_list, labels, save_l
 
     # fit a line to the log-log data for each subplot
     for i in range(len(drift_mag_list)):
-        x = var_ef_list[i]
-        y = drift_mag_list[i][-1]
-        log_x = np.log(x)
-        log_y = np.log(y)
+        x = np.asarray(var_ef_list[i])
+        y = np.asarray(drift_mag_list[i][-1])
+        # silent cells have NaN drift, and log(0) is -inf: linregress returns NaN
+        # for the whole fit unless they are dropped
+        ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+        log_x = np.log(x[ok])
+        log_y = np.log(y[ok])
         slope, intercept, r_value, p_value, std_err = stats.linregress(log_x, log_y)
-        x_fit = np.linspace(np.min(x), np.max(x), 100)
+        x_fit = np.linspace(np.min(x[ok]), np.max(x[ok]), 100)
         y_fit = np.exp(intercept) * x_fit ** slope
         axs[i].plot(x_fit, y_fit, color='red', label=f"Slope: {slope:.2f}")
         axs[i].legend(frameon=False)
