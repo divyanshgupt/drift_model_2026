@@ -13,9 +13,54 @@ plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 # plt.rcParams['font.family'] = 'Arial'
 
-save_loc_general = "../../results/06-17 - hebb vs stochastic/1A. F to E plastic - co-tuned inh - hebb vs stochastic/"
+hebb_k = 0.8
+eta_k = 0.2
+
+
+save_loc_general = "../../results/06-17 - hebb vs stochastic/1A+ - F to E plastic - multiseed - high hebb/"
+save_loc_general = save_loc_general + f"hebb_{hebb_k:.1f}_eta_{eta_k:.1f}/"
 if not os.path.exists(save_loc_general):
     os.makedirs(save_loc_general)
+
+
+seed_list = np.arange(1, 11)  # 10 seeds
+
+drift_baseline_all = np.zeros((len(seed_list), 100, 400))  # (n_seeds, n_days, n_cells)
+drift_cno_all = np.zeros((len(seed_list),100, 400))  # (n_seeds, n_days, n_cells)
+
+for i, seed in enumerate(tqdm(seed_list)):
+    baseline_dir = save_loc_general + f"baseline_seed_{seed}/"
+    cno_dir = save_loc_general + f"cno_seed_{seed}/"
+
+    if os.path.exists(baseline_dir + "results.h5") and os.path.exists(cno_dir + "results.h5"):
+        continue  # skip to next seed
+        
+
+    net_baseline = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
+                        plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
+                        norm=True, set_seed=True, seed=1,
+                        inh_scale=1.0, train_sigma=25,
+                        inh_mod_type="hyperpolarizing",
+                        hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
+                        inh_input_scale=0,
+                        save_location = save_loc_general + f"baseline hebb_{hebb_k:.1f}_eta_{eta_k:.1f}/")
+    net_baseline.run_analysis(save_results=True)
+    drift_mag, _, _ = net_baseline.get_drift_metrics()
+    drift_baseline_all[i] = drift_mag
+
+    net_cno = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
+                            plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
+                                norm=True, set_seed=True, seed=1,
+                                inh_scale=1.0, train_sigma=25,
+                                inh_mod_type="hyperpolarizing",
+                                hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
+                                inh_input_scale=1,
+                                save_location = save_loc_general + f"cno hebb_{hebb_k:.1f}_eta_{eta_k:.1f}/")
+    net_cno.run_analysis(save_results=True)
+    drift_mag, _, _ = net_cno.get_drift_metrics()
+    drift_cno_all[i] = drift_mag
+
+
 
 hebb_k_range = np.arange(0, 1.01, 0.1) 
 eta_k_range = np.arange(0, 1.01, 0.1)
@@ -39,7 +84,7 @@ for i, hebb_k in enumerate(tqdm(hebb_k_range)):
 
         net_baseline = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
                             plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
-                            norm=True, set_seed=True, seed=seed,
+                            norm=True, set_seed=True, seed=1,
                             inh_scale=1.0, train_sigma=25,
                             inh_mod_type="hyperpolarizing",
                             hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
@@ -51,7 +96,7 @@ for i, hebb_k in enumerate(tqdm(hebb_k_range)):
 
         net_cno = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
                             plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
-                                norm=True, set_seed=True, seed=seed,
+                                norm=True, set_seed=True, seed=1,
                                 inh_scale=1.0, train_sigma=25,
                                 inh_mod_type="hyperpolarizing",
                                 hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
@@ -81,3 +126,6 @@ plt.ylabel('Hebb_k')
 plt.title('Drift Difference (CNO - Baseline)')
 plt.savefig(save_loc_general + "drift_diff_heatmap.png", dpi=300)
 plt.show()
+
+
+

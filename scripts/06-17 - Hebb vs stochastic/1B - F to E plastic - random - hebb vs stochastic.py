@@ -13,7 +13,7 @@ plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 # plt.rcParams['font.family'] = 'Arial'
 
-save_loc_general = "../../results/06-17 - hebb vs stochastic/1A. F to E plastic - co-tuned inh - hebb vs stochastic/"
+save_loc_general = "../../results/06-17 - hebb vs stochastic/1B. F to E plastic - random - hebb vs stochastic/"
 if not os.path.exists(save_loc_general):
     os.makedirs(save_loc_general)
 
@@ -37,9 +37,9 @@ for i, hebb_k in enumerate(tqdm(hebb_k_range)):
                 drift_mag_cno_all[i, j] = f["drift_mag"][:][-1]
             continue  # skip to next k value
 
-        net_baseline = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
+        net_baseline = BaselineNetwork(inh_type="random", E_to_E="on", E_to_I="on", I_to_I="on",
                             plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
-                            norm=True, set_seed=True, seed=seed,
+                            norm=True, set_seed=True, seed=1,
                             inh_scale=1.0, train_sigma=25,
                             inh_mod_type="hyperpolarizing",
                             hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
@@ -49,9 +49,9 @@ for i, hebb_k in enumerate(tqdm(hebb_k_range)):
         drift_mag, _, _ = net_baseline.get_drift_metrics()
         drift_mag_baseline_all[i, j] = drift_mag[-1]  # store final day drift magnitude
 
-        net_cno = BaselineNetwork(inh_type="co-tuned", E_to_E="on", E_to_I="on", I_to_I="on",
+        net_cno = BaselineNetwork(inh_type="random", E_to_E="on", E_to_I="on", I_to_I="on",
                             plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
-                                norm=True, set_seed=True, seed=seed,
+                                norm=True, set_seed=True, seed=1,
                                 inh_scale=1.0, train_sigma=25,
                                 inh_mod_type="hyperpolarizing",
                                 hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=100,
