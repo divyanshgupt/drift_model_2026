@@ -11,6 +11,34 @@ plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 
 
+
+def save_drift_data(data_loc, hebb_k_range, eta_k_range, seeds, n_days, N):
+
+    shape = (len(seeds), len(hebb_k_range), len(eta_k_range), n_days, N)  # (n_seeds, n_hebb_k, n_eta_k)
+    drift_mag_baseline_all = np.full(shape, np.nan)
+    drift_mag_cno_all = np.full(shape, np.nan)
+
+    for seed_idx, seed in enumerate(seeds):
+        for i, hebb_k in enumerate(hebb_k_range):
+            for j, eta_k in enumerate(eta_k_range):
+                for cond in ["baseline", "cno"]:
+                    data_dir = data_loc + f"data/seed_{seed}/hebb_{hebb_k:.2f}_eta_{eta_k:.2f}/{cond}/"
+                    if os.path.exists(data_dir + "results.hdf5"):
+                        with h5py.File(data_dir + "results.hdf5", "r") as f:
+                            drift_mag = f["drift_mag"][:]
+                        if cond == "baseline":
+                            drift_mag_baseline_all[seed_idx, i, j] = drift_mag
+                        else:
+                            drift_mag_cno_all[seed_idx, i, j] = drift_mag
+
+    # Save the drift data to an HDF5 file
+    with h5py.File(data_loc + "drift_data.hdf5", "w") as f:
+        f.create_dataset("drift_mag_baseline_all", data=drift_mag_baseline_all)
+        f.create_dataset("drift_mag_cno_all", data=drift_mag_cno_all)
+        f.create_dataset("hebb_k_range", data=hebb_k_range)
+        f.create_dataset("eta_k_range", data=eta_k_range)
+    
+
 def load_data(data_loc, hebb_k_range, eta_k_range, seeds,
               n_days, N):
     shape = (len(seeds), len(hebb_k_range), len(eta_k_range), n_days, N)  # (n_seeds, n_hebb_k, n_eta_k)
@@ -151,4 +179,20 @@ def plot_complete_hebb_vs_stoch_grid(drift_mag_baseline_all, drift_mag_cno_all,
     plt.title('Median Drift Difference')
     plt.tight_layout()
     plt.savefig(median_plots_loc + "drift_median_difference_grid_hebb_vs_stoch.svg", dpi=300)
+    plt.close()
+
+    # Plot relative difference (CNO - Baseline) / Baseline
+    plt.figure(figsize=(6, 5))
+    relative_diff = (final_drift_cno - final_drift_baseline) / np.where(final_drift_baseline != 0, final_drift_baseline, np.nan)
+    v_relative_diff = np.nanmax(np.abs(relative_diff))  # max value for color scale
+    plt.imshow(relative_diff, origin='lower', aspect='auto',
+               cmap=cmap, vmin=-v_relative_diff, vmax=v_relative_diff)
+    plt.xticks(ticks=xticks, labels=[f"{x:.1f}" for x in eta_k_range[xticks]])
+    plt.yticks(ticks=yticks, labels=[f"{x:.1f}" for x in hebb_k_range[yticks]])
+    plt.colorbar(label='Relative Drift Difference (CNO - Baseline) / Baseline')
+    plt.xlabel(r'$K_{\eta}$ (Stochastic Scaling)')
+    plt.ylabel(r'$K_{H}$ (Hebbian Scaling)')
+    plt.title('Relative Drift Difference')
+    plt.tight_layout()
+    plt.savefig(plots_loc + "relative_drift_difference_grid_hebb_vs_stoch.svg", dpi=300)
     plt.close()

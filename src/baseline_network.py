@@ -39,6 +39,7 @@ class BaselineNetwork():
                   inh_input_scale = 1,
                   weight_clipping = False,
                   norm=True, set_seed=True, seed=42, inh_scale=1, E_to_I_scale=1,
+                  J_EE=1.0, J_EI=1.0, J_IE=1.0, J_II=1.0, # recurrent gains, applied in dynamics only
                   hebb_scaling=0.3, rand_scaling=1.0, n_days=28,
                   if_pre_run=True, n_pre_run_stimuli=300,
                   train_sigma=25, probe_sigma=25,
@@ -49,6 +50,10 @@ class BaselineNetwork():
         self.inh_type = inh_type
         self.inh_scale = inh_scale
         self.E_to_I_scale = E_to_I_scale
+        self.J_EE = J_EE
+        self.J_EI = J_EI
+        self.J_IE = J_IE
+        self.J_II = J_II
 
         self.E_to_E = E_to_E
         self.E_to_I = E_to_I
@@ -360,8 +365,8 @@ class BaselineNetwork():
 
     def step(self, inh_scale=1.0):
 
-        dU_E = (1/self.tau_E) * (-self.u_E + self.w_ef.T @ self.r_F + self.w_ee.T @ self.r_E - inh_scale * self.w_ei.T @ self.r_I)
-        dU_I = (1/self.tau_I) * (-self.u_I + self.w_if.T @ self.r_F + self.w_ie.T @ self.r_E - inh_scale * self.w_ii.T @ self.r_I + self.inh_input)
+        dU_E = (1/self.tau_E) * (-self.u_E + self.w_ef.T @ self.r_F + self.J_EE * (self.w_ee.T @ self.r_E) - inh_scale * self.J_EI * (self.w_ei.T @ self.r_I))
+        dU_I = (1/self.tau_I) * (-self.u_I + self.w_if.T @ self.r_F + self.J_IE * (self.w_ie.T @ self.r_E) - inh_scale * self.J_II * (self.w_ii.T @ self.r_I) + self.inh_input)
 
         self.u_E += dU_E * self.dt
         self.u_I += dU_I * self.dt
@@ -383,8 +388,8 @@ class BaselineNetwork():
         for _ in range(self.T_seq):
             r_E = np.maximum(0, u_E)
             r_I = np.maximum(0, u_I)
-            dU_E = (1/self.tau_E) * (-u_E + r_F_batch @ w_ef + r_E @ w_ee - inh_scale * r_I @ w_ei)
-            dU_I = (1/self.tau_I) * (-u_I + r_F_batch @ w_if + r_E @ w_ie - inh_scale * r_I @ w_ii + self.inh_input)
+            dU_E = (1/self.tau_E) * (-u_E + r_F_batch @ w_ef + self.J_EE * (r_E @ w_ee) - inh_scale * self.J_EI * (r_I @ w_ei))
+            dU_I = (1/self.tau_I) * (-u_I + r_F_batch @ w_if + self.J_IE * (r_E @ w_ie) - inh_scale * self.J_II * (r_I @ w_ii) + self.inh_input)
             u_E += dU_E * self.dt
             u_I += dU_I * self.dt
         return np.maximum(0, u_E), np.maximum(0, u_I)
@@ -561,8 +566,8 @@ class BaselineNetwork():
         r_I = np.zeros(self.N_inh)
 
         for t in range(self.T_seq):
-            dU_E = (1/self.tau_E) * (-u_E + w_ef.T @ r_F + w_ee.T @ r_E - inh_mod_scale * w_ei.T @ r_I)
-            dU_I = (1/self.tau_I) * (-u_I + w_if.T @ r_F + w_ie.T @ r_E - inh_mod_scale * w_ii.T @ r_I + self.inh_input)
+            dU_E = (1/self.tau_E) * (-u_E + w_ef.T @ r_F + self.J_EE * (w_ee.T @ r_E) - inh_mod_scale * self.J_EI * (w_ei.T @ r_I))
+            dU_I = (1/self.tau_I) * (-u_I + w_if.T @ r_F + self.J_IE * (w_ie.T @ r_E) - inh_mod_scale * self.J_II * (w_ii.T @ r_I) + self.inh_input)
 
             u_E += dU_E * self.dt
             u_I += dU_I * self.dt
@@ -1049,7 +1054,7 @@ class BaselineNetwork():
         with h5.File(self.save_location + "results.hdf5", "w") as f:
 
             if save_weights:
-                f.create_dataset("W_ef", data=self.W_ef)
+                f.create_dataset("W_ef", data=self.W_ef[:, int(self.N//2)]) # save only center neuron (idx = N//2) weights for each day
                 # f.create_dataset("W_ee", data=self.W_ee)
                 # f.create_dataset("W_ei", data=self.W_ei)
                 # f.create_dataset("W_if", data=self.W_if)
@@ -1110,7 +1115,11 @@ class BaselineNetwork():
             "train_sigma": self.train_sigma,
             "probe_sigma": self.probe_sigma,
             "set_seed": self.set_seed,
-            "seed": self.seed
+            "seed": self.seed,
+            "J_EE": self.J_EE,
+            "J_EI": self.J_EI,
+            "J_IE": self.J_IE,
+            "J_II": self.J_II
         }
 
         if self.weight_clipping:

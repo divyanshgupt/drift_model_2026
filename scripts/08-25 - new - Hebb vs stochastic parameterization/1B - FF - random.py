@@ -59,8 +59,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    hebb_k_range = np.linspace(0, 2, 20)
-    eta_k_range = np.linspace(0, 2, 20)
+    hebb_k_range = np.linspace(0, 1, 20)
+    eta_k_range = np.linspace(0, 1, 20)
     seeds = np.arange(1, 10)
     n_days = 50
     weight_clipping = True

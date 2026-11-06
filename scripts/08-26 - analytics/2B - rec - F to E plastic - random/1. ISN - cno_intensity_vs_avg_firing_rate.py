@@ -85,6 +85,11 @@ if __name__ == "__main__":
     N = 500
     day = 0
 
+    J_EE = 1.2
+    J_EI = 1.2
+    J_IE = 1.2
+    J_II = 1.0
+
     avg_E_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
     avg_I_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
 

@@ -19,7 +19,7 @@ from joblib import Parallel, delayed
 import argparse
 from tqdm import tqdm
 from network import FeedForward
-from load_and_plot import plot_complete_hebb_vs_stoch_grid, load_data
+from load_and_plot import plot_complete_hebb_vs_stoch_grid, load_data, save_drift_data
 
 plt.rcParams["axes.spines.top"] = False
 plt.rcParams["axes.spines.right"] = False
@@ -77,11 +77,11 @@ if __name__ == "__main__":
         os.makedirs(save_loc_general)
 
 
-
     if args.stage == "generate":
         generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clipping,
                  baseline_inh_input_scale, cno_inh_input_scale, PO_method,
                  save_loc_general)
+        save_drift_data(save_loc_general, hebb_k_range, eta_k_range, seeds, n_days, N)
 
     elif args.stage == "plot":
         drift_mag_baseline_all, drift_mag_cno_all = load_data(save_loc_general, hebb_k_range, eta_k_range, seeds,

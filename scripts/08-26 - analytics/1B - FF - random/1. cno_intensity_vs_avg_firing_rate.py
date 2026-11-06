@@ -4,8 +4,6 @@
 # Plot avg E and I firing rates on y-axis
 # and the hyperpolarizing input to the inh population on x-axis.
 
-
-
 import json
 import numpy as np
 import h5py
@@ -23,14 +21,14 @@ plt.rcParams['font.size'] = 12
 plt.rcParams['lines.linewidth'] = 2
 
 
-
-
 def generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
+             J_EE, J_EI, J_IE, J_II,
              n_theta, N, n_days, day, avg_E_firing_rates, avg_I_firing_rates):
     
     for input_idx, cno_inh_input_scale in enumerate(cno_inh_input_scales):
         network = FeedForward(inh='on', inh_type='blanket',
                         inh_mod_type="hyperpolarizing", inh_input_scale=cno_inh_input_scale,
+                        J_EE=J_EE, J_EI=J_EI, J_IE=J_IE, J_II=J_II,
                         hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
                         seed=seed)
 
@@ -69,7 +67,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    save_loc = "../../../results/08-26 - analytics/1B - FF - random/1. cno_intensity_vs_avg_firing_rate/"
+    save_loc = "../../../results/08-26 - analytics/1B - FF - random/1. cno_intensity_vs_avg_firing_rate/ISN/"
 
     if not os.path.exists(save_loc):
         os.makedirs(save_loc)
@@ -83,11 +81,17 @@ if __name__ == "__main__":
     N = 500
     day = 1
 
+    J_EE = 1.2
+    J_EI = 1.2
+    J_IE = 1.2
+    J_II = 1.0
+
     avg_E_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
     avg_I_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
 
     if args.stage == "generate":
         generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
+                 J_EE, J_EI, J_IE, J_II,
                  n_theta, N, n_days, day, avg_E_firing_rates, avg_I_firing_rates)
 
     if args.stage == "plot":

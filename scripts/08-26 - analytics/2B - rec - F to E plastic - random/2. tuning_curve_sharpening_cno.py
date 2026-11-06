@@ -38,12 +38,12 @@ def generate(cno_inh_input_scales, seed, hebb_k, eta_k,
         f.create_dataset("tuning_widths", data=tuning_widths_neuron)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="rec - F to E plastic - cotuned: run simulations or generate plots")
-    parser.add_argument("--stage", choices=["generate", "plot"], default="plot")
+    parser = argparse.ArgumentParser(description="rec - F to E plastic - random: run simulations or generate plots")
+    parser.add_argument("--stage", choices=["generate", "plot", "complete"], default="plot")
 
     args = parser.parse_args()
 
-    save_loc = "../../../results/08-26 - analytics/2A - rec - F to E plastic - cotuned/2. tuning_curve_sharpening_cno/"
+    save_loc = "../../../results/08-26 - analytics/2B - rec - F to E plastic - random/2. tuning_curve_sharpening_cno/"
 
     if not os.path.exists(save_loc):
         os.makedirs(save_loc)
@@ -100,7 +100,50 @@ if __name__ == "__main__":
         axs[2].set_title("Tuning Widths")
         axs[2].legend(frameon=False)
 
-        fig.suptitle("Recurrent - F to E plastic - cotuned")
+        fig.suptitle("Recurrent - F to E plastic - random")
         fig.tight_layout()
         fig.savefig(save_loc + "tuning_curves_center_neuron.svg")
 
+    elif args.stage == "complete":
+        generate(cno_inh_input_scales, seed, hebb_k, eta_k,
+                  n_theta, N, day, 
+                  tuning_curves_neuron, tuning_widths_neuron, save_loc)
+        # load the tuning curves of the center neuron
+        with h5py.File(save_loc + "tuning_curves_center_neuron.hdf5", "r") as f:
+            tuning_curves_neuron = f["tuning_curves"][:]
+            tuning_widths_neuron = f["tuning_widths"][:]
+            cno_inh_input_scales = f["cno_inh_input_scales"][:]
+
+        x_ticks = np.linspace(0, 180, 5)
+        xtick_labels = [0, 45, 90, 135, 180]
+        color = 'blue'
+        fig, axs = plt.subplots(1, 3, figsize=(10, 3))
+        axs[0].set_xticks(x_ticks)
+        axs[0].set_xticklabels(xtick_labels)
+        axs[1].set_xticks(x_ticks)
+        axs[1].set_xticklabels(xtick_labels)
+
+        scaled_cno_inh_input_scales = 0.1 * cno_inh_input_scales
+        for input_idx, scaled_cno_inh_input_scale in enumerate(scaled_cno_inh_input_scales):
+            axs[0].plot(np.linspace(0, 180, n_theta), tuning_curves_neuron[input_idx, :],
+                         label=rf"$I_{{CNO}}$: {scaled_cno_inh_input_scale:.2f}", color=color, alpha=0.2 + input_idx * 0.2)
+            axs[1].plot(np.linspace(0, 180, n_theta), tuning_curves_neuron[input_idx, :] / np.max(tuning_curves_neuron[input_idx, :]),
+                         label=rf"$I_{{CNO}}$: {scaled_cno_inh_input_scale:.2f}", color=color, alpha=0.2 + input_idx * 0.2)
+        axs[0].set_xlabel(r"$\theta$")
+        axs[0].set_ylabel("Tuning")
+        axs[0].set_title("Tuning Curves")
+        axs[0].legend(frameon=False)
+
+        axs[1].set_xlabel(r"$\theta$")
+        axs[1].set_ylabel("Normalized Tuning")
+        axs[1].set_title("Normalized Tuning Curves")
+        axs[1].legend(frameon=False)
+
+        axs[2].plot(scaled_cno_inh_input_scales, tuning_widths_neuron.flatten(), marker='o', color='black')
+        axs[2].set_xlabel(r"$I_{CNO}$")
+        axs[2].set_ylabel("Tuning Width (°)")
+        axs[2].set_title("Tuning Widths")
+        axs[2].legend(frameon=False)
+        fig.suptitle("Recurrent - F to E plastic - random")
+        fig.tight_layout()
+        fig.savefig(save_loc + "tuning_curves_center_neuron.svg")      

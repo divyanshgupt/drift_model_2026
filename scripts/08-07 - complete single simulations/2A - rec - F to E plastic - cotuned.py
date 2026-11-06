@@ -23,6 +23,7 @@ plt.rcParams['font.size'] = 12
 
 def generate(seeds, hebb_k, eta_k,
                 n_days, N, weight_clip,
+                J_EE, J_EI, J_IE, J_II,
                   cno_inh_input_scale, baseline_inh_input_scale,
                 save_loc_sim):
     
@@ -45,6 +46,7 @@ def generate(seeds, hebb_k, eta_k,
                                 plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
                                 norm=True, set_seed=True, seed=int(seed),
                                 inh_scale=1.0, train_sigma=25,
+                                J_EE=J_EE, J_EI=J_EI, J_IE=J_IE, J_II=J_II,
                                 weight_clipping=weight_clip, inh_mod_type="hyperpolarizing", inh_input_scale=baseline_inh_input_scale,
                                 hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days, 
                                 save_location=save_loc_baseline)
@@ -55,6 +57,7 @@ def generate(seeds, hebb_k, eta_k,
                                 plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
                                 norm=True, set_seed=True, seed=int(seed),
                                 inh_scale=1.0, train_sigma=25,
+                                J_EE=J_EE, J_EI=J_EI, J_IE=J_IE, J_II=J_II,
                                 weight_clipping=weight_clip, inh_mod_type="hyperpolarizing", inh_input_scale=cno_inh_input_scale,
                             hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
                             save_location=save_loc_cno)
@@ -73,25 +76,30 @@ if __name__ == "__main__":
 
     n_seeds = 10
     seeds = np.arange(1, n_seeds + 1)  # 10 seeds
-    hebb_k = 0.6
-    eta_k = 0.5
+    # hebb_k = 0.6
+    # eta_k = 0.5
     n_days = 50
     N = 400
     weight_clip = False
-    cno_inh_input_scale = 1.0
+    cno_inh_input_scale = 0.5
     baseline_inh_input_scale = 0.0
 
     n_theta = 500
 
-    hebb_k_list = [0.5]
-    eta_k_list = [1.5]
+    J_EE = 1.2
+    J_EI = 1.2
+    J_IE = 1.2
+    J_II = 1.0
+
+    hebb_k_list = [0.5, 0.5, 0.5]
+    eta_k_list = [0.0, 0.5, 1.0]
     hebb_eta_zip = zip(hebb_k_list, eta_k_list)
 
 
     if args.stage == "generate":
 
         for hebb_k, eta_k in hebb_eta_zip:
-            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
+            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/ISN/I_cno={:.1f}/".format(cno_inh_input_scale)
             if weight_clip:
                 save_loc_general += "weight_clipping/"
             sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
@@ -100,12 +108,13 @@ if __name__ == "__main__":
                 os.makedirs(plots_loc)
 
             generate(seeds, hebb_k, eta_k, n_days, N, weight_clip,
+                     J_EE, J_EI, J_IE, J_II,
                       cno_inh_input_scale, baseline_inh_input_scale, sim_loc)
 
     elif args.stage == "plot":
 
         for hebb_k, eta_k in hebb_eta_zip:
-            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
+            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/ISN/I_cno={:.1f}/".format(cno_inh_input_scale)
             if weight_clip:
                 save_loc_general += "weight_clipping/"
             sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
@@ -128,14 +137,14 @@ if __name__ == "__main__":
                     baseline_tuning_over_days, cno_tuning_over_days,
                     baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
                     W_baseline, W_cno,
-                    n_seeds, n_days, N, n_theta,
+                    n_seeds, n_days + 1, N, n_theta,
                     seeds,
                     hebb_k, eta_k, plots_loc)
 
     elif args.stage == "complete":
     
         for hebb_k, eta_k in hebb_eta_zip:
-            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/"
+            save_loc_general = "../../results/08-07 - complete single simulations/2A - rec - F to E plastic - cotuned/ISN/I_cno={:.1f}/".format(cno_inh_input_scale)
             if weight_clip:
                 save_loc_general += "weight_clipping/"
             sim_loc = save_loc_general + "hebb_{:.2f}_eta_{:.2f}/".format(hebb_k, eta_k)
@@ -144,6 +153,7 @@ if __name__ == "__main__":
                 os.makedirs(plots_loc)
 
             generate(seeds, hebb_k, eta_k, n_days, N, weight_clip,
+                     J_EE, J_EI, J_IE, J_II,
                       cno_inh_input_scale, baseline_inh_input_scale, sim_loc)
 
             (baseline_drift_mag, baseline_drift_rate,

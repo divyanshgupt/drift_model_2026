@@ -19,7 +19,7 @@ plt.rcParams["axes.spines.top"] = False
 plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 
-def generate(seeds, hebb_k, eta_k, n_days, N, 
+def generate(seeds, hebb_k, eta_k, n_days, N, n_theta, 
              weight_clip, cno_inh_input_scale, baseline_inh_input_scale,
                PO_method, save_loc_sim):
     
@@ -41,7 +41,7 @@ def generate(seeds, hebb_k, eta_k, n_days, N,
         network = FeedForward(inh='on', inh_type='co-tuned',
                             inh_mod_type="hyperpolarizing", inh_input_scale=baseline_inh_input_scale,
                             weight_clipping=weight_clip, hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
-                            seed=int(seed), PO_method=PO_method)
+                            seed=int(seed), PO_method=PO_method, n_test_angles=n_theta)
         network.run_analysis(saveloc=save_loc_baseline, 
                             save_results=True, save_anims=False,
                             save_weights=True, save_tuning=True)
@@ -49,12 +49,12 @@ def generate(seeds, hebb_k, eta_k, n_days, N,
         network_cno = FeedForward(inh='on', inh_type='co-tuned',
                                 inh_mod_type="hyperpolarizing", inh_input_scale=cno_inh_input_scale,
                             weight_clipping=weight_clip, hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
-                            seed=int(seed), PO_method=PO_method)
+                            seed=int(seed), PO_method=PO_method, n_test_angles=n_theta)
         network_cno.run_analysis(saveloc=save_loc_cno,
                             save_results=True, save_anims=False,
                             save_weights=True, save_tuning=True)
 
-    Parallel(n_jobs=12, batch_size=1, verbose=10)(
+    Parallel(n_jobs=20, batch_size=1, verbose=10)(
         delayed(run_one)(seed_idx, seed) for seed_idx, seed in enumerate(seeds)
     )
 
@@ -75,11 +75,11 @@ if __name__ == "__main__":
     cno_inh_input_scale = 1
     baseline_inh_input_scale = 0
 
-    n_theta = 100
+    n_theta = 500
     PO_method = 'argmax' # 'argmax' or 'circular_mean'
 
-    hebb_k_list = [0.5, 0.5, 0.5]
-    eta_k_list  = [0, 0.5, 1.0]
+    hebb_k_list = [0.0, 0.5, 1.0]
+    eta_k_list  = [0.0, 0.0, 0.0]
 
     hebb_eta_zip = zip(hebb_k_list, eta_k_list)
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
                 os.makedirs(plots_loc)
 
 
-            generate(seeds, hebb_k, eta_k, n_days, N, 
+            generate(seeds, hebb_k, eta_k, n_days, N, n_theta,
                     weight_clip, cno_inh_input_scale, baseline_inh_input_scale,
                       PO_method, save_loc_sim)
 
@@ -140,7 +140,7 @@ if __name__ == "__main__":
             if not os.path.exists(plots_loc):
                 os.makedirs(plots_loc)
 
-            generate(seeds, hebb_k, eta_k, n_days, N, 
+            generate(seeds, hebb_k, eta_k, n_days, N, n_theta,
                     weight_clip, cno_inh_input_scale, baseline_inh_input_scale, 
                     PO_method, save_loc_sim)
 

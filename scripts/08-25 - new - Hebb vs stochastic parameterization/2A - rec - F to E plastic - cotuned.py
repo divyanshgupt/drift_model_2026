@@ -26,6 +26,7 @@ plt.rcParams["axes.spines.right"] = False
 plt.rcParams['font.size'] = 12
 
 def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
+             J_EE, J_EI, J_IE, J_II,
              baseline_inh_input_scale, cno_inh_input_scale,
              save_loc_general):
     
@@ -45,6 +46,7 @@ def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
                               norm=True, set_seed=True, seed=int(seed),
                               inh_scale=1.0, train_sigma=25,
                               inh_mod_type="hyperpolarizing",
+                              J_EE=J_EE, J_EI=J_EI, J_IE=J_IE, J_II=J_II,
                               weight_clipping=weight_clip,
                               hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
                               inh_input_scale=baseline_inh_input_scale if cond == "baseline" else cno_inh_input_scale,
@@ -59,30 +61,47 @@ def generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FF - random: run simulations or generate plots")
-    parser.add_argument("--stage", choices=["generate", "plot"], default="plot")
+    parser.add_argument("--stage", choices=["generate", "plot", "complete"], default="plot")
 
     args = parser.parse_args()
 
-    save_loc_general = "../../results/08-25 - new - Hebb vs stochastic parameterization/2A - rec - F to E plastic - cotuned/"
-    if not os.path.exists(save_loc_general):
-        os.makedirs(save_loc_general)
-
-    hebb_k_range = np.linspace(0, 2, 10)
-    eta_k_range = np.linspace(0, 2, 10)
+    hebb_k_range = np.linspace(0, 1, 20)
+    eta_k_range = np.linspace(0, 1, 20)
     seeds = np.arange(0, 5)
     n_days = 50
     N = 400
     weight_clip = False
     baseline_inh_input_scale = 0
-    cno_inh_input_scale = 1.0
+    cno_inh_input_scale = 0.5
+
+    J_EE = 1.2
+    J_EI = 1.2
+    J_IE = 1.2
+    J_II = 1.0
+
+    save_loc_general = "../../results/08-25 - new - Hebb vs stochastic parameterization/2A - rec - F to E plastic - cotuned/ISN/I_cno={:.1f}/".format(cno_inh_input_scale)
+    if not os.path.exists(save_loc_general):
+        os.makedirs(save_loc_general)
     
 
     if args.stage == "generate":
         generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
+                    J_EE, J_EI, J_IE, J_II,
                  baseline_inh_input_scale, cno_inh_input_scale,
                  save_loc_general)
 
     elif args.stage == "plot":
+        drift_mag_baseline_all, drift_mag_cno_all = load_data(save_loc_general, hebb_k_range, eta_k_range, seeds,
+                                                              n_days+1, N)
+        plot_complete_hebb_vs_stoch_grid(drift_mag_baseline_all, drift_mag_cno_all,
+                                         hebb_k_range, eta_k_range,
+                                         save_loc_general)
+
+    if args.stage == "complete":
+        generate(seeds, hebb_k_range, eta_k_range, n_days, N, weight_clip,
+                    J_EE, J_EI, J_IE, J_II,
+                 baseline_inh_input_scale, cno_inh_input_scale,
+                 save_loc_general)
         drift_mag_baseline_all, drift_mag_cno_all = load_data(save_loc_general, hebb_k_range, eta_k_range, seeds,
                                                               n_days+1, N)
         plot_complete_hebb_vs_stoch_grid(drift_mag_baseline_all, drift_mag_cno_all,

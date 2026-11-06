@@ -24,6 +24,7 @@ plt.rcParams['lines.linewidth'] = 2
 
 
 def generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
+             J_EE, J_EI, J_IE, J_II,
              n_theta, N, n_days, day, avg_E_firing_rates, avg_I_firing_rates):
     
     for input_idx, cno_inh_input_scale in enumerate(cno_inh_input_scales):
@@ -32,6 +33,7 @@ def generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
                                 plasticity_E_to_E="off", plasticity_E_to_I="off", plasticity_I_to_E="off", plasticity_I_to_I="off",
                                 norm=True, set_seed=True, seed=int(seed),
                                 inh_scale=1.0, train_sigma=25,
+                                J_EE=J_EE, J_EI=J_EI, J_IE=J_IE, J_II=J_II,
                                 inh_mod_type="hyperpolarizing", inh_input_scale=cno_inh_input_scale,
                                 hebb_scaling=hebb_k, rand_scaling=eta_k, n_days=n_days,
                                 save_location=save_loc)
@@ -67,11 +69,11 @@ def generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="rec - F to E plastic - cotuned: run simulations or generate plots")
-    parser.add_argument("--stage", choices=["generate", "plot"], default="plot")
+    parser.add_argument("--stage", choices=["generate", "plot", "complete"], default="plot")
 
     args = parser.parse_args()
 
-    save_loc = "../../../results/08-26 - analytics/2A - rec - F to E plastic - cotuned/1. ISN - cno_intensity_vs_avg_firing_rate/"
+    save_loc = "../../../results/08-26 - analytics/2A - rec - F to E plastic - cotuned/1. ISN - cno_intensity_vs_avg_firing_rate/ISN/"
 
     if not os.path.exists(save_loc):
         os.makedirs(save_loc)
@@ -85,11 +87,17 @@ if __name__ == "__main__":
     N = 500
     day = 0
 
+    J_EE = 1.2
+    J_EI = 1.2
+    J_IE = 1.2
+    J_II = 1.0
+
     avg_E_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
     avg_I_firing_rates = np.full((len(cno_inh_input_scales),), np.nan)
 
     if args.stage == "generate":
         generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
+                 J_EE, J_EI, J_IE, J_II,
                  n_theta, N, n_days, day, avg_E_firing_rates, avg_I_firing_rates)
 
     if args.stage == "plot":
@@ -99,9 +107,33 @@ if __name__ == "__main__":
             avg_I_firing_rates = f["avg_I_firing_rates"][:]
             cno_inh_input_scales = f["cno_inh_input_scales"][:]
 
+        scaled_cno_inh_input_scales = 0.1 * cno_inh_input_scales
         plt.figure(figsize=(5, 3))
-        plt.plot(cno_inh_input_scales, avg_E_firing_rates, label="Avg E firing rate", color='blue', marker='o')
-        plt.plot(cno_inh_input_scales, avg_I_firing_rates, label="Avg I firing rate", color='red', marker='o')
+        plt.plot(scaled_cno_inh_input_scales, avg_E_firing_rates, label="Avg E firing rate", color='blue', marker='o')
+        plt.plot(scaled_cno_inh_input_scales, avg_I_firing_rates, label="Avg I firing rate", color='red', marker='o')
+        plt.xlabel("Hyperpolarizing input to inh population")
+        plt.ylabel("Average firing rate (Hz)")
+        plt.title("Recurrent - F to E plastic - cotuned")
+        plt.legend(frameon=False)
+        plt.tight_layout()
+        plt.savefig(save_loc + "cno_intensity_vs_avg_firing_rate.svg", dpi=300)
+        plt.show()
+
+    if args.stage == "complete":
+
+        generate(save_loc, cno_inh_input_scales, seed, hebb_k, eta_k,
+                 J_EE, J_EI, J_IE, J_II,
+                 n_theta, N, n_days, day, avg_E_firing_rates, avg_I_firing_rates)
+
+        with h5py.File(save_loc + "cno_intensity_vs_avg_firing_rate.hdf5", "r") as f:
+            avg_E_firing_rates = f["avg_E_firing_rates"][:]
+            avg_I_firing_rates = f["avg_I_firing_rates"][:]
+            cno_inh_input_scales = f["cno_inh_input_scales"][:]
+
+        scaled_cno_inh_input_scales = 0.1 * cno_inh_input_scales
+        plt.figure(figsize=(5, 3))
+        plt.plot(scaled_cno_inh_input_scales, avg_E_firing_rates, label="Avg E firing rate", color='blue', marker='o')
+        plt.plot(scaled_cno_inh_input_scales, avg_I_firing_rates, label="Avg I firing rate", color='red', marker='o')
         plt.xlabel("Hyperpolarizing input to inh population")
         plt.ylabel("Average firing rate (Hz)")
         plt.title("Recurrent - F to E plastic - cotuned")

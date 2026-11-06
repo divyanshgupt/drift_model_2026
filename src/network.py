@@ -897,7 +897,7 @@ class FeedForward():
         with h5.File(self.save_location + 'results.hdf5', 'w') as f:
 
             if save_weights:
-                f.create_dataset("W", data=self.W)
+                f.create_dataset("W", data=self.W[:, int(self.N//2)]) # save only for center neuron (idx = N//2)
                 f.create_dataset("w_ef_baseline", data=self.w_ef_baseline)
                 f.create_dataset("w_if", data=self.w_if)
                 f.create_dataset("w_ei", data=self.w_ei)

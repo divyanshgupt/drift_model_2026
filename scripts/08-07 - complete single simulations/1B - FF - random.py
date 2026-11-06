@@ -64,8 +64,8 @@ if __name__ == "__main__":
 
     n_seeds = 10
     seeds = np.arange(1, n_seeds + 1)  # 10 seeds
-    # hebb_k = 2.4
-    # eta_k = 2.8
+    # hebb_k = 0.3
+    # eta_k = 1.0
     n_days = 50
     N = 500
     weight_clip = False
@@ -75,12 +75,13 @@ if __name__ == "__main__":
     PO_method = 'argmax' # 'argmax' or 'circular_mean'
     n_theta = 100
 
-    hebb_k_list = [1.5]
-    eta_k_list = [1.5]
+    # hebb_k_list = [0.5, 0.5, 0.5]
+    # eta_k_list = [0.0, 0.5, 1.0]
+
+    hebb_k_list = [0.3]
+    eta_k_list = [1.0]
 
     hebb_eta_zip = zip(hebb_k_list, eta_k_list)
-
-
 
 
     if args.stage == "generate":
@@ -114,7 +115,8 @@ if __name__ == "__main__":
             cno_drift_mag, cno_drift_rate,
             baseline_POs, cno_POs,
             baseline_tuning_over_days, cno_tuning_over_days,
-            baseline_tuning_widths_over_days, cno_tuning_widths_over_days) = load_data(save_loc_sim, seeds, n_seeds, n_days, N, n_theta)
+            baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+            W_baseline, W_cno) = load_data(save_loc_sim, seeds, n_seeds, n_days, N, n_theta)
 
 
             plot_all(baseline_drift_mag, baseline_drift_rate,
@@ -122,6 +124,7 @@ if __name__ == "__main__":
                     baseline_POs, cno_POs,
                     baseline_tuning_over_days, cno_tuning_over_days,
                     baseline_tuning_widths_over_days, cno_tuning_widths_over_days,
+                    W_baseline, W_cno,
                     n_seeds, n_days, N, n_theta,
                     seeds,
                     hebb_k, eta_k, plots_loc)
