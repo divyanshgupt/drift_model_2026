@@ -151,7 +151,6 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
     fig.tight_layout()
     fig.savefig(plots_loc + "baseline_drift_distributions.svg")
 
-
     # Plot initial and final tuning widths (combined across seeds)
     print("Plotting baseline initial and final tuning widths...")
     fig, axs = plt.subplots(1, 2, figsize=(6, 3), dpi=300)
@@ -302,6 +301,28 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
     fig.tight_layout()
     fig.savefig(plots_loc + "baseline_vs_cno_drift_distributions.svg")
 
+
+    # plot baseline drift vs cno drift
+    print("Plotting baseline drift vs CNO drift...")
+    fig, axs = plt.subplots(1, 1, figsize=(4, 3), dpi=300)
+    for seed_idx in range(n_seeds):
+        final_baseline_drift_mag_seed = baseline_drift_mag[seed_idx, -1, :]
+        final_cno_drift_mag_seed = cno_drift_mag[seed_idx, -1, :]
+        axs.plot(np.sort(final_baseline_drift_mag_seed), np.arange(1, len(np.sort(final_baseline_drift_mag_seed)) + 1) / len(np.sort(final_baseline_drift_mag_seed)),
+                  color=baseline_color, label='baseline' if seed_idx == 0 else "", alpha=0.7)
+        axs.plot(np.sort(final_cno_drift_mag_seed), np.arange(1, len(np.sort(final_cno_drift_mag_seed)) + 1) / len(np.sort(final_cno_drift_mag_seed)),
+                  color=cno_color, label='CNO' if seed_idx == 0 else "", alpha=0.7)
+    axs.set_xlabel(r"$\Delta\theta$ (°)")
+    axs.set_ylabel("CDF")
+    axs.set_title("Final Drift Magnitude")
+    axs.legend(frameon=False)
+    axs.set_xlim((-1, 30))
+    # axs.set_xscale('log')
+
+    fig.suptitle(rf"$K_{{hebb}}$ = {hebb_k}, $K_{{eta}}$ = {eta_k}")
+    fig.tight_layout()
+    fig.savefig(plots_loc + "drift_cdf_baseline_vs_cno.svg")
+
     # tuning curve plots
 
     ## initial vs final tuning curves for baseline
@@ -325,6 +346,25 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
     fig.suptitle(rf"$K_{{hebb}}$ = {hebb_k}, $K_{{eta}}$ = {eta_k} - baseline tuning curve seed {seeds[seed_idx]}")
     fig.savefig(plots_loc + "baseline_initial_vs_final_tuning_curves.svg")
 
+    # initial vs final tuning curves for cno
+    print("Plotting CNO initial vs final tuning curves...")
+    seed_idx = 0  # example seed index
+    initial_tuning_curves_cno = cno_tuning_over_days[seed_idx, 0, :, :].reshape(-1, n_theta)
+    final_tuning_curves_cno = cno_tuning_over_days[seed_idx, -1, :, :].reshape(-1, n_theta)
+
+    fig, axs = plt.subplots(1, 2, figsize=(9, 3.5), dpi=300)
+    offset = 0.01
+    for cell_idx in range(0, initial_tuning_curves_cno.shape[0], 20):
+        axs[0].plot(np.linspace(0, 180, n_theta), initial_tuning_curves_cno[cell_idx] + cell_idx * offset, color=cno_color, alpha=0.8)
+        axs[1].plot(np.linspace(0, 180, n_theta), final_tuning_curves_cno[cell_idx] + cell_idx * offset, color=cno_color, alpha=0.8)
+
+    axs[0].set_xlabel(r"$\theta$ (°)")
+    axs[1].set_xlabel(r"$\theta$ (°)")
+
+    axs[0].set_yticks([]); axs[1].set_yticks([])
+
+    fig.suptitle(rf"$K_{{hebb}}$ = {hebb_k}, $K_{{eta}}$ = {eta_k} - CNO tuning curve seed {seeds[seed_idx]}")
+    fig.savefig(plots_loc + "cno_initial_vs_final_tuning_curves.svg")
 
     # tuning curve animation for baseline - single cell
     print("Creating baseline tuning curve animation for single cell...")
@@ -469,8 +509,13 @@ def plot_all(baseline_drift_mag, baseline_drift_rate,
         # 1. weights over time for single post neuron
         seed_idx = 0
         cell_idx = int(N/2)  # example post neuron index
-        incoming_weights_baseline = W_baseline[seed_idx, :, cell_idx, :]
-        incoming_weights_cno = W_cno[seed_idx, :, cell_idx, :]
+        if W_baseline.ndim == 4 and W_cno.ndim == 4:
+            incoming_weights_baseline = W_baseline[seed_idx, :, cell_idx, :]
+            incoming_weights_cno = W_cno[seed_idx, :, cell_idx, :]
+        elif W_baseline.ndim == 3 and W_cno.ndim == 3: # only center neuron included
+            incoming_weights_baseline = W_baseline[seed_idx, :, :]
+            incoming_weights_cno = W_cno[seed_idx, :, :]
+
         time_array = np.linspace(0, n_days, incoming_weights_baseline.shape[1])
         fig, axs = plt.subplots(1, 2, figsize=(8, 3), dpi=300)
 
